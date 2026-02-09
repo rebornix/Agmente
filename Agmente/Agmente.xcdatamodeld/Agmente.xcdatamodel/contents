@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<model type="com.apple.IDECoreDataModeler.DataModel" documentVersion="1.0" lastSavedToolsVersion="1" systemVersion="11A491" minimumToolsVersion="Automatic" sourceLanguage="Swift" usedWithCloudKit="false" userDefinedModelVersionIdentifier="">
+    <entity name="Item" representedClassName="Item" syncable="YES" codeGenerationType="class">
+        <attribute name="timestamp" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+    </entity>
+    <entity name="StoredMessage" representedClassName="StoredMessage" syncable="YES" codeGenerationType="class">
+        <attribute name="content" attributeType="String"/>
+        <attribute name="createdAt" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="messageId" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="orderIndex" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="role" attributeType="String"/>
+        <attribute name="segmentsData" optional="YES" attributeType="Binary"/>
+        <relationship name="session" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="StoredSession" inverseName="messages" inverseEntity="StoredSession"/>
+    </entity>
+    <entity name="StoredServer" representedClassName="StoredServer" syncable="YES" codeGenerationType="class">
+        <attribute name="host" attributeType="String"/>
+        <attribute name="id" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="name" attributeType="String"/>
+        <attribute name="scheme" attributeType="String" defaultValueString="ws"/>
+        <attribute name="cfAccessClientId" optional="YES" attributeType="String"/>
+        <attribute name="cfAccessClientSecret" optional="YES" attributeType="String"/>
+        <attribute name="token" optional="YES" attributeType="String"/>
+        <attribute name="workingDirectory" attributeType="String" defaultValueString="/"/>
+        <attribute name="serverType" optional="YES" attributeType="String" defaultValueString="acp"/>
+        <attribute name="usedWorkingDirectories" optional="YES" attributeType="Transformable" valueTransformerName="NSSecureUnarchiveFromDataTransformerName"/>
+        <relationship name="sessions" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="StoredSession" inverseName="server" inverseEntity="StoredSession"/>
+    </entity>
+    <entity name="StoredSession" representedClassName="StoredSession" syncable="YES" codeGenerationType="class">
+        <attribute name="cwd" optional="YES" attributeType="String"/>
+        <attribute name="sessionId" attributeType="String"/>
+        <attribute name="title" optional="YES" attributeType="String"/>
+        <attribute name="updatedAt" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <relationship name="messages" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="StoredMessage" inverseName="session" inverseEntity="StoredMessage"/>
+        <relationship name="server" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="StoredServer" inverseName="sessions" inverseEntity="StoredServer"/>
+    </entity>
+    <elements>
+        <element name="Item" positionX="-63" positionY="-18" width="128" height="44"/>
+        <element name="StoredMessage" positionX="450" positionY="100" width="128" height="148"/>
+        <element name="StoredServer" positionX="160" positionY="0" width="128" height="163"/>
+        <element name="StoredSession" positionX="360" positionY="0" width="128" height="133"/>
+    </elements>
+</model>

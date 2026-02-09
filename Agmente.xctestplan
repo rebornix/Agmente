@@ -1,0 +1,38 @@
+{
+  "configurations" : [
+    {
+      "id" : "B0B4D95A-D13C-48A8-B5A2-0F368C2D8A31",
+      "name" : "Test Scheme Action",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "performanceAntipatternCheckerEnabled" : true,
+    "targetForVariableExpansion" : {
+      "containerPath" : "container:Agmente.xcodeproj",
+      "identifier" : "4B0ED1A82EDA2237000D949E",
+      "name" : "Agmente"
+    }
+  },
+  "testTargets" : [
+    {
+      "parallelizable" : false,
+      "target" : {
+        "containerPath" : "container:Agmente.xcodeproj",
+        "identifier" : "4B0ED1BD2EDA2238000D949E",
+        "name" : "AgmenteTests"
+      }
+    },
+    {
+      "parallelizable" : true,
+      "target" : {
+        "containerPath" : "container:Agmente.xcodeproj",
+        "identifier" : "4B0ED1C72EDA2238000D949E",
+        "name" : "AgmenteUITests"
+      }
+    }
+  ],
+  "version" : 1
+}

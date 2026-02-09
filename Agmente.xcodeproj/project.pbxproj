@@ -1,0 +1,627 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		4B0ED1DD2EDA23BA000D949E /* ACPClient in Frameworks */ = {isa = PBXBuildFile; productRef = 4B0ED1DC2EDA23BA000D949E /* ACPClient */; };
+		4B98A0C62EFD012800FFF21E /* AppServerClient in Frameworks */ = {isa = PBXBuildFile; productRef = 4B98A0C52EFD012800FFF21E /* AppServerClient */; };
+		4BF9CAC72EF39606006464B5 /* (null) in Frameworks */ = {isa = PBXBuildFile; };
+		4BF9CAC82EF39606006464B5 /* (null) in Frameworks */ = {isa = PBXBuildFile; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		4B0ED1BF2EDA2238000D949E /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 4B0ED1A12EDA2237000D949E /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 4B0ED1A82EDA2237000D949E;
+			remoteInfo = Agmente;
+		};
+		4B0ED1C92EDA2238000D949E /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 4B0ED1A12EDA2237000D949E /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 4B0ED1A82EDA2237000D949E;
+			remoteInfo = Agmente;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		4B0ED1A92EDA2237000D949E /* Agmente.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Agmente.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		4B0ED1BE2EDA2238000D949E /* AgmenteTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AgmenteTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		4B0ED1C82EDA2238000D949E /* AgmenteUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AgmenteUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		4BF9CAFB2EF78D1E006464B5 /* Agmente.xctestplan */ = {isa = PBXFileReference; lastKnownFileType = text; path = Agmente.xctestplan; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		4B0ED2152EDA5E88000D949E /* Exceptions for "Agmente" folder in "Agmente" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 4B0ED1A82EDA2237000D949E /* Agmente */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		4B0ED1AB2EDA2237000D949E /* Agmente */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				4B0ED2152EDA5E88000D949E /* Exceptions for "Agmente" folder in "Agmente" target */,
+			);
+			path = Agmente;
+			sourceTree = "<group>";
+		};
+		4B0ED1C12EDA2238000D949E /* AgmenteTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = AgmenteTests;
+			sourceTree = "<group>";
+		};
+		4B0ED1CB2EDA2238000D949E /* AgmenteUITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = AgmenteUITests;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		4B0ED1A62EDA2237000D949E /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4B0ED1DD2EDA23BA000D949E /* ACPClient in Frameworks */,
+				4B98A0C62EFD012800FFF21E /* AppServerClient in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		4B0ED1BB2EDA2238000D949E /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4BF9CAC72EF39606006464B5 /* (null) in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		4B0ED1C52EDA2238000D949E /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4BF9CAC82EF39606006464B5 /* (null) in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		4B0ED1A02EDA2237000D949E = {
+			isa = PBXGroup;
+			children = (
+				4BF9CAFB2EF78D1E006464B5 /* Agmente.xctestplan */,
+				4B0ED1AB2EDA2237000D949E /* Agmente */,
+				4B0ED1C12EDA2238000D949E /* AgmenteTests */,
+				4B0ED1CB2EDA2238000D949E /* AgmenteUITests */,
+				4B0ED1AA2EDA2237000D949E /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		4B0ED1AA2EDA2237000D949E /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				4B0ED1A92EDA2237000D949E /* Agmente.app */,
+				4B0ED1BE2EDA2238000D949E /* AgmenteTests.xctest */,
+				4B0ED1C82EDA2238000D949E /* AgmenteUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		4B0ED1A82EDA2237000D949E /* Agmente */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 4B0ED1D22EDA2238000D949E /* Build configuration list for PBXNativeTarget "Agmente" */;
+			buildPhases = (
+				4B0ED1A52EDA2237000D949E /* Sources */,
+				4B0ED1A62EDA2237000D949E /* Frameworks */,
+				4B0ED1A72EDA2237000D949E /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				4B0ED1AB2EDA2237000D949E /* Agmente */,
+			);
+			name = Agmente;
+			packageProductDependencies = (
+				4B0ED1DC2EDA23BA000D949E /* ACPClient */,
+				4B98A0C52EFD012800FFF21E /* AppServerClient */,
+			);
+			productName = Agmente;
+			productReference = 4B0ED1A92EDA2237000D949E /* Agmente.app */;
+			productType = "com.apple.product-type.application";
+		};
+		4B0ED1BD2EDA2238000D949E /* AgmenteTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 4B0ED1D52EDA2238000D949E /* Build configuration list for PBXNativeTarget "AgmenteTests" */;
+			buildPhases = (
+				4B0ED1BA2EDA2238000D949E /* Sources */,
+				4B0ED1BB2EDA2238000D949E /* Frameworks */,
+				4B0ED1BC2EDA2238000D949E /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				4B0ED1C02EDA2238000D949E /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				4B0ED1C12EDA2238000D949E /* AgmenteTests */,
+			);
+			name = AgmenteTests;
+			packageProductDependencies = (
+			);
+			productName = AgmenteTests;
+			productReference = 4B0ED1BE2EDA2238000D949E /* AgmenteTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		4B0ED1C72EDA2238000D949E /* AgmenteUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 4B0ED1D82EDA2238000D949E /* Build configuration list for PBXNativeTarget "AgmenteUITests" */;
+			buildPhases = (
+				4B0ED1C42EDA2238000D949E /* Sources */,
+				4B0ED1C52EDA2238000D949E /* Frameworks */,
+				4B0ED1C62EDA2238000D949E /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				4B0ED1CA2EDA2238000D949E /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				4B0ED1CB2EDA2238000D949E /* AgmenteUITests */,
+			);
+			name = AgmenteUITests;
+			packageProductDependencies = (
+			);
+			productName = AgmenteUITests;
+			productReference = 4B0ED1C82EDA2238000D949E /* AgmenteUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		4B0ED1A12EDA2237000D949E /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1600;
+				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+					4B0ED1A82EDA2237000D949E = {
+						CreatedOnToolsVersion = 16.0;
+					};
+					4B0ED1BD2EDA2238000D949E = {
+						CreatedOnToolsVersion = 16.0;
+						TestTargetID = 4B0ED1A82EDA2237000D949E;
+					};
+					4B0ED1C72EDA2238000D949E = {
+						CreatedOnToolsVersion = 16.0;
+						TestTargetID = 4B0ED1A82EDA2237000D949E;
+					};
+				};
+			};
+			buildConfigurationList = 4B0ED1A42EDA2237000D949E /* Build configuration list for PBXProject "Agmente" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 4B0ED1A02EDA2237000D949E;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				4B0ED1DB2EDA23BA000D949E /* XCLocalSwiftPackageReference "ACPClient" */,
+				4B98A0C42EFD012800FFF21E /* XCLocalSwiftPackageReference "AppServerClient" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 4B0ED1AA2EDA2237000D949E /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				4B0ED1A82EDA2237000D949E /* Agmente */,
+				4B0ED1BD2EDA2238000D949E /* AgmenteTests */,
+				4B0ED1C72EDA2238000D949E /* AgmenteUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		4B0ED1A72EDA2237000D949E /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		4B0ED1BC2EDA2238000D949E /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		4B0ED1C62EDA2238000D949E /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		4B0ED1A52EDA2237000D949E /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		4B0ED1BA2EDA2238000D949E /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		4B0ED1C42EDA2238000D949E /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		4B0ED1C02EDA2238000D949E /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 4B0ED1A82EDA2237000D949E /* Agmente */;
+			targetProxy = 4B0ED1BF2EDA2238000D949E /* PBXContainerItemProxy */;
+		};
+		4B0ED1CA2EDA2238000D949E /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 4B0ED1A82EDA2237000D949E /* Agmente */;
+			targetProxy = 4B0ED1C92EDA2238000D949E /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		4B0ED1D02EDA2238000D949E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		4B0ED1D12EDA2238000D949E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		4B0ED1D32EDA2238000D949E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 58;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_ASSET_PATHS = "\"Agmente/Preview Content\"";
+				DEVELOPMENT_TEAM = "";
+				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Agmente/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Agmente;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.2;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.Agmente;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		4B0ED1D42EDA2238000D949E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 58;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_ASSET_PATHS = "\"Agmente/Preview Content\"";
+				DEVELOPMENT_TEAM = "";
+				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Agmente/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Agmente;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.2;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.Agmente;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		4B0ED1D62EDA2238000D949E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MARKETING_VERSION = 1.2;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.AgmenteTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Agmente.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Agmente";
+			};
+			name = Debug;
+		};
+		4B0ED1D72EDA2238000D949E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				MARKETING_VERSION = 1.2;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.AgmenteTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Agmente.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Agmente";
+			};
+			name = Release;
+		};
+		4B0ED1D92EDA2238000D949E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.2;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.AgmenteUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = Agmente;
+			};
+			name = Debug;
+		};
+		4B0ED1DA2EDA2238000D949E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.2;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.AgmenteUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = Agmente;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		4B0ED1A42EDA2237000D949E /* Build configuration list for PBXProject "Agmente" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				4B0ED1D02EDA2238000D949E /* Debug */,
+				4B0ED1D12EDA2238000D949E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		4B0ED1D22EDA2238000D949E /* Build configuration list for PBXNativeTarget "Agmente" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				4B0ED1D32EDA2238000D949E /* Debug */,
+				4B0ED1D42EDA2238000D949E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		4B0ED1D52EDA2238000D949E /* Build configuration list for PBXNativeTarget "AgmenteTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				4B0ED1D62EDA2238000D949E /* Debug */,
+				4B0ED1D72EDA2238000D949E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		4B0ED1D82EDA2238000D949E /* Build configuration list for PBXNativeTarget "AgmenteUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				4B0ED1D92EDA2238000D949E /* Debug */,
+				4B0ED1DA2EDA2238000D949E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		4B0ED1DB2EDA23BA000D949E /* XCLocalSwiftPackageReference "ACPClient" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ACPClient;
+		};
+		4B98A0C42EFD012800FFF21E /* XCLocalSwiftPackageReference "AppServerClient" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = AppServerClient;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		4B0ED1DC2EDA23BA000D949E /* ACPClient */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = ACPClient;
+		};
+		4B98A0C52EFD012800FFF21E /* AppServerClient */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = AppServerClient;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 4B0ED1A12EDA2237000D949E /* Project object */;
+}

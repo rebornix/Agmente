@@ -1,0 +1,144 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "maple",
+  "name": "Agent Client Protocol",
+  "description": "The Agent Client Protocol (ACP) is a protocol that standardizes communication between code editors.",
+  "colors": {
+    "primary": "#0084d1",
+    "light": "#00bcff",
+    "dark": "#0084d1"
+  },
+  "background": {
+    "color": {
+      "light": "#f8f8f6",
+      "dark": "#12141A"
+    }
+  },
+  "fonts": {
+    "heading": {
+      "family": "Lora",
+      "format": "woff2"
+    },
+    "body": {
+      "family": "Public Sans",
+      "format": "woff2"
+    }
+  },
+  "favicon": {
+    "light": "/logo/fav-light.png",
+    "dark": "/logo/fav-dark.png"
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "GitHub",
+        "href": "https://github.com/agentclientprotocol/agent-client-protocol"
+      },
+      {
+        "label": "Zed Industries",
+        "href": "https://zed.dev"
+      }
+    ]
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Protocol",
+        "pages": [
+          {
+            "group": "Overview",
+            "pages": [
+              "overview/introduction",
+              "overview/architecture",
+              "overview/agents",
+              "overview/clients"
+            ]
+          },
+          {
+            "group": "Protocol",
+            "pages": [
+              "protocol/overview",
+              "protocol/initialization",
+              "protocol/session-setup",
+              "protocol/prompt-turn",
+              "protocol/content",
+              "protocol/tool-calls",
+              "protocol/file-system",
+              "protocol/terminals",
+              "protocol/agent-plan",
+              "protocol/session-modes",
+              "protocol/slash-commands",
+              "protocol/extensibility",
+              "protocol/transports",
+              "protocol/schema"
+            ]
+          },
+          {
+            "group": "Libraries",
+            "pages": [
+              "libraries/kotlin",
+              "libraries/python",
+              "libraries/rust",
+              "libraries/typescript",
+              "libraries/community"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "RFDs",
+        "pages": [
+          "rfds/about",
+          {
+            "group": "Draft",
+            "pages": [
+              "rfds/session-list",
+              "rfds/session-config-options",
+              "rfds/session-fork",
+              "rfds/request-cancellation",
+              "rfds/session-resume"
+            ]
+          },
+          { "group": "Preview", "pages": [] },
+          { "group": "Completed", "pages": ["rfds/introduce-rfd-process"] }
+        ]
+      },
+      {
+        "tab": "Community",
+        "pages": [
+          "community/communication",
+          "community/code-of-conduct",
+          "community/governance",
+          "community/working-interest-groups",
+          "community/contributing"
+        ]
+      },
+      {
+        "tab": "Updates",
+        "pages": ["updates"]
+      },
+      {
+        "tab": "Brand",
+        "pages": ["brand"]
+      }
+    ]
+  },
+  "logo": {
+    "light": "/logo/light.svg",
+    "dark": "/logo/dark.svg"
+  },
+  "seo": {
+    "metatags": {
+      "og:image": "https://zed.dev/img/acp/og-dark.webp"
+    },
+    "indexing": "navigable"
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/agentclientprotocol/agent-client-protocol"
+    }
+  },
+  "contextual": {
+    "options": ["copy", "view"]
+  }
+}
