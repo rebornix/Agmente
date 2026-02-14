@@ -379,6 +379,10 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
         // For Codex, we use thread/resume to fetch full history from server
         Task { @MainActor [weak self] in
             guard let self else { return }
+            if shouldSkipResumeForActiveStreamingSession(id) {
+                appendClosure("Skipping redundant thread/resume for active streaming thread: \(id)")
+                return
+            }
             guard let service = getServiceClosure() else {
                 appendClosure("Not connected - falling back to local cache")
                 setActiveSession(id, cwd: nil, modes: nil)
@@ -427,6 +431,55 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
                 appendClosure("Failed to resume thread: \(error.localizedDescription) - falling back to local cache")
                 // Fall back to local storage if thread/resume fails
                 setActiveSession(id, cwd: nil, modes: nil)
+            }
+        }
+    }
+
+    /// Re-establish Codex thread event subscription after foreground reconnect.
+    ///
+    /// If the active session is still streaming, we avoid resetting chat UI state and
+    /// only resubscribe the backend stream + refresh metadata.
+    func resubscribeActiveSessionAfterReconnect() {
+        guard connectionState == .connected else { return }
+        let activeId = sessionId.isEmpty ? (selectedSessionId ?? "") : sessionId
+        guard !activeId.isEmpty else { return }
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let hadStreamingBeforeResume = activeTurnId != nil || isStreaming
+            let pendingCwd = sessionSummaries.first(where: { $0.id == activeId })?.cwd
+
+            do {
+                appendClosure("Re-subscribing Codex thread after reconnect: \(activeId)")
+                let result = try await resumeThread(threadId: activeId)
+
+                sessionId = activeId
+                selectedSessionId = activeId
+
+                if hadStreamingBeforeResume {
+                    if let cwd = result.cwd {
+                        rememberSession(activeId, cwd: cwd)
+                    } else {
+                        rememberSession(activeId, cwd: nil)
+                    }
+                    let resolvedCwd = result.cwd ?? pendingCwd
+                    fetchSkills(sessionId: activeId, cwdOverride: resolvedCwd)
+                    appendClosure("Re-subscribed active thread without resetting streaming UI")
+                } else {
+                    populateChatFromThreadHistory(result)
+                    if let cwd = result.cwd {
+                        rememberSession(activeId, cwd: cwd)
+                    } else {
+                        rememberSession(activeId, cwd: nil)
+                    }
+                    let resolvedCwd = result.cwd ?? pendingCwd
+                    fetchSkills(sessionId: activeId, cwdOverride: resolvedCwd)
+                    appendClosure("Re-subscribed active thread and refreshed chat history")
+                }
+
+                pendingSessionLoad = nil
+            } catch {
+                appendClosure("Failed to re-subscribe active thread: \(error.localizedDescription)")
             }
         }
     }
@@ -744,6 +797,12 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
     private func failPendingTurn(_ message: String) {
         currentSessionViewModel?.abandonStreamingMessage()
         currentSessionViewModel?.addSystemErrorMessage(message)
+    }
+
+    private func shouldSkipResumeForActiveStreamingSession(_ id: String) -> Bool {
+        id == sessionId
+            && id == selectedSessionId
+            && (activeTurnId != nil || isStreaming)
     }
 
     private func formatPromptError(_ error: Error) -> String {

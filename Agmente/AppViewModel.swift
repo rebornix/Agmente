@@ -1621,6 +1621,7 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
         // Fetch models for Codex servers after initialization
         if let codexServer = selectedServerViewModelAny as? CodexServerViewModel {
             codexServer.fetchModels()
+            codexServer.resubscribeActiveSessionAfterReconnect()
         }
     }
 
