@@ -396,9 +396,7 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
                     fetchModels()
                 }
 
-                // Fetch skills for the target session's working directory
                 let pendingCwd = sessionSummaries.first(where: { $0.id == id })?.cwd
-                fetchSkills(sessionId: id, cwdOverride: pendingCwd)
 
                 appendClosure("Resuming Codex thread: \(id)")
 
@@ -417,6 +415,8 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
                 } else {
                     rememberSession(id, cwd: nil)
                 }
+                let resolvedCwd = result.cwd ?? pendingCwd
+                fetchSkills(sessionId: id, cwdOverride: resolvedCwd)
 
                 pendingSessionLoad = nil
                 if isSessionLoggingEnabled() {
@@ -830,7 +830,7 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
 
     private func setSessionSummaries(_ summaries: [SessionSummary]) {
         // Preserve previously known fields (cwd) when the latest server payload omits them.
-        // Codex app-server thread/list doesn't include cwd, so a fresh fetch would otherwise
+        // Older Codex servers may omit cwd in thread/list, so a fresh fetch would otherwise
         // wipe out cached working directories until the user re-opens each session.
         let existing = sessionSummaries
 
@@ -1338,9 +1338,9 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
             guard let thread = value.objectValue else { return nil }
             guard let id = thread["id"]?.stringValue, !id.isEmpty else { return nil }
             let preview = thread["preview"]?.stringValue
-            let createdAtSeconds = thread["createdAt"]?.numberValue.map { Int($0) }
-            let createdAt = createdAtSeconds.map { Date(timeIntervalSince1970: TimeInterval($0)) }
-            return SessionSummary(id: id, title: preview, cwd: nil, updatedAt: createdAt)
+            let cwd = thread["cwd"]?.stringValue ?? thread["workingDirectory"]?.stringValue
+            let updatedAt = parseUnixDate(thread["updatedAt"]) ?? parseUnixDate(thread["createdAt"])
+            return SessionSummary(id: id, title: preview, cwd: cwd, updatedAt: updatedAt)
         }
     }
 
@@ -1417,8 +1417,7 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
 
         let preview = thread["preview"]?.stringValue
         let cwd = thread["cwd"]?.stringValue ?? object["cwd"]?.stringValue
-        let createdAtSeconds = thread["createdAt"]?.numberValue.map { Int($0) }
-        let createdAt = createdAtSeconds.map { Date(timeIntervalSince1970: TimeInterval($0)) }
+        let createdAt = parseUnixDate(thread["createdAt"])
 
         var turns: [CodexThreadResumeResult.Turn] = []
         if case let .array(turnsArray)? = thread["turns"] {
@@ -1447,6 +1446,29 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
             createdAt: createdAt,
             turns: turns
         )
+    }
+
+    private func parseUnixDate(_ value: JSONValue?) -> Date? {
+        if let raw = value?.numberValue {
+            return Date(timeIntervalSince1970: normalizeUnixTimestampToSeconds(raw))
+        }
+        if let rawString = value?.stringValue, let raw = Double(rawString) {
+            return Date(timeIntervalSince1970: normalizeUnixTimestampToSeconds(raw))
+        }
+        return nil
+    }
+
+    private func normalizeUnixTimestampToSeconds(_ raw: Double) -> TimeInterval {
+        if raw >= 1e17 {
+            return raw / 1_000_000_000.0
+        }
+        if raw >= 1e14 {
+            return raw / 1_000_000.0
+        }
+        if raw >= 1e11 {
+            return raw / 1_000.0
+        }
+        return raw
     }
 
     private func parseThreadItem(_ value: JSONValue) -> CodexThreadResumeResult.Item? {
