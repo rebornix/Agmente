@@ -1091,7 +1091,8 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
                     handleCodexItemEvent(itemValue, status: "completed", turnId: turnId)
                 }
             case "turn/completed":
-                let completedTurnId = params["turn"]?.objectValue?["id"]?.stringValue
+                let turnObject = params["turn"]?.objectValue
+                let completedTurnId = turnObject?["id"]?.stringValue
                 if let activeTurnId, let completedTurnId, completedTurnId != activeTurnId {
                     return
                 }
@@ -1122,6 +1123,8 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
                         }
                     }
                 }
+            case "error":
+                handleErrorNotification(params)
             default:
                 break
             }
@@ -1137,6 +1140,25 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
 
         case .response, .error:
             break
+        }
+    }
+
+    private func handleErrorNotification(_ params: [String: JSONValue]) {
+        let errorObject = params["error"]?.objectValue
+        let errorMessage = errorObject?["message"]?.stringValue
+            ?? params["message"]?.stringValue
+            ?? "Unknown error"
+        let willRetry = params["willRetry"]?.boolValue ?? false
+
+        appendClosure("Codex error notification: \(errorMessage) (willRetry=\(willRetry))")
+
+        if willRetry {
+            // Transient error — the server will auto-retry; show as informational
+            currentSessionViewModel?.appendAssistantText("\n\n⚠️ \(errorMessage) (retrying…)\n\n", kind: .message)
+        } else {
+            // Terminal error — stop streaming and show the error
+            currentSessionViewModel?.finishStreamingMessage()
+            currentSessionViewModel?.addSystemErrorMessage(errorMessage)
         }
     }
 
