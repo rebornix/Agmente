@@ -203,6 +203,7 @@ struct AddServerView: View {
                         }
                     }
                     .disabled(!canSave)
+                    .accessibilityIdentifier("saveToolbarButton")
                 }
             }
         }
@@ -467,12 +468,14 @@ private struct ServerSummaryOverlay: View {
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("serverSummaryConfirmButton")
 
                 Button(action: onCancel) {
                     Text("Back to editing")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.bordered)
+                .accessibilityIdentifier("serverSummaryBackButton")
             }
         }
         .padding(20)

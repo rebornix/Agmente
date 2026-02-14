@@ -320,6 +320,7 @@ private extension CodexSessionDetailView {
                         .padding(.vertical, 4)
                         .font(.body)
                         .scrollContentBackground(.hidden)
+                        .accessibilityIdentifier("codexPromptEditor")
 
                     if model.promptText.isEmpty && sessionViewModel.attachedImages.isEmpty {
                         Text(promptPlaceholderText)
@@ -365,6 +366,7 @@ private extension CodexSessionDetailView {
                 .disabled(!canSendPrompt && !canCancelPrompt)
                 .buttonStyle(.plain)
                 .accessibilityLabel(serverViewModel.isStreaming ? "Stop" : "Send")
+                .accessibilityIdentifier("codexSendButton")
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -665,6 +667,7 @@ private extension CodexSessionDetailView {
 
     func userBubble(for message: ChatMessage) -> some View {
         UserBubble(content: message.content, images: message.images)
+            .accessibilityIdentifier("codexUserBubble")
     }
 
     func assistantBubble(for message: ChatMessage) -> some View {
@@ -724,13 +727,16 @@ private extension CodexSessionDetailView {
 
             if message.isStreaming {
                 ShimmeringBubble(text: "Thinking…")
+                    .accessibilityIdentifier("codexThinkingBubble")
             }
         }
         .padding(.horizontal, 2)
+        .accessibilityIdentifier("codexAssistantBubble")
     }
 
     func systemBubble(for message: ChatMessage) -> some View {
         SystemBubble(content: message.content)
+            .accessibilityIdentifier("codexSystemBubble")
     }
 
     @ViewBuilder

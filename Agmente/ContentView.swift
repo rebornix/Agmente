@@ -229,6 +229,7 @@ private extension ContentView {
                 } label: {
                     Label("Add Server", systemImage: "plus")
                 }
+                .accessibilityIdentifier("addServerMenuAction")
             } label: {
                 if #available(iOS 26.0, *) {
                     HStack(spacing: 10) {
@@ -298,6 +299,7 @@ private extension ContentView {
             } label: {
                 Label("More", systemImage: "ellipsis")
             }
+            .accessibilityIdentifier("moreMenuButton")
         }
     }
 }

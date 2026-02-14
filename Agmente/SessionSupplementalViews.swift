@@ -439,6 +439,7 @@ struct SessionPlaceholderView: View {
                 Button(action: onAddServer) {
                     Label("Add Server", systemImage: "plus.circle")
                 }
+                .accessibilityIdentifier("emptyStateAddServerButton")
             }
             
             Link(destination: URL(string: "https://agmente.halliharp.com/docs/guides/local-agent")!) {
