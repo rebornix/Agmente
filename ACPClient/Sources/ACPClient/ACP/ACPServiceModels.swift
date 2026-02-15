@@ -7,6 +7,9 @@ public struct ACPInitializationPayload: Sendable {
     public var clientTitle: String?
     public var clientVersion: String
     public var clientCapabilities: [String: ACP.Value]
+    /// Codex app-server capabilities (sent as "capabilities" in the initialize params).
+    /// Separate from clientCapabilities which is ACP-specific.
+    public var capabilities: [String: ACP.Value]
     public var options: [String: ACP.Value]
 
     public init(
@@ -15,6 +18,7 @@ public struct ACPInitializationPayload: Sendable {
         clientVersion: String,
         clientTitle: String? = nil,
         clientCapabilities: [String: ACP.Value] = [:],
+        capabilities: [String: ACP.Value] = [:],
         options: [String: ACP.Value] = [:]
     ) {
         self.protocolVersion = protocolVersion
@@ -22,6 +26,7 @@ public struct ACPInitializationPayload: Sendable {
         self.clientTitle = clientTitle
         self.clientVersion = clientVersion
         self.clientCapabilities = clientCapabilities
+        self.capabilities = capabilities
         self.options = options
     }
 
@@ -37,6 +42,9 @@ public struct ACPInitializationPayload: Sendable {
             "clientInfo": .object(clientInfo.compactMapValues { $0 }),
             "clientCapabilities": .object(clientCapabilities)
         ]
+        if !capabilities.isEmpty {
+            object["capabilities"] = .object(capabilities)
+        }
         if !options.isEmpty {
             object["options"] = .object(options)
         }

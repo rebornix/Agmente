@@ -695,6 +695,16 @@ private extension SessionDetailView {
                     }
                 case .toolCall(let segment):
                     toolCallBubble(segment: segment, isStreaming: message.isStreaming && lastIndex == index)
+                case .plan(let segment):
+                    if !segment.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        MarkdownText(content: segment.text)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 8)
+                            .background(Color.blue.opacity(0.08))
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                    }
                 }
             }
 

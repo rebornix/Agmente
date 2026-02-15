@@ -617,18 +617,19 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
         let client = ACPClient(configuration: config, logger: PrintLogger())
         let service = ACPService(client: client)
 
-        let capabilities: [String: ACP.Value] = [
+        let clientCapabilities: [String: ACP.Value] = [
             "fs": .object([
                 "readTextFile": .bool(supportsFSRead),
                 "writeTextFile": .bool(supportsFSWrite)
             ]),
-            "terminal": .bool(supportsTerminal)
+            "terminal": .bool(supportsTerminal),
         ]
         let initPayload = ACPInitializationPayload(
             protocolVersion: 1,
             clientName: clientName,
             clientVersion: clientVersion,
-            clientCapabilities: capabilities
+            clientCapabilities: clientCapabilities,
+            capabilities: ["experimentalApi": .bool(true)]
         )
 
         var agentInfo: AgentProfile?
@@ -1626,19 +1627,25 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
     }
 
     private func makeInitializationPayload() -> ACPInitializationPayload {
-        let capabilities: [String: ACP.Value] = [
+        let clientCapabilities: [String: ACP.Value] = [
             "fs": .object([
                 "readTextFile": .bool(supportsFSRead),
                 "writeTextFile": .bool(supportsFSWrite)
             ]),
-            "terminal": .bool(supportsTerminal)
+            "terminal": .bool(supportsTerminal),
+        ]
+
+        // Codex app-server capabilities (separate from ACP clientCapabilities)
+        let capabilities: [String: ACP.Value] = [
+            "experimentalApi": .bool(true),
         ]
 
         return ACPInitializationPayload(
             protocolVersion: 1,
             clientName: clientName,
             clientVersion: clientVersion,
-            clientCapabilities: capabilities
+            clientCapabilities: clientCapabilities,
+            capabilities: capabilities
         )
     }
 
@@ -2242,6 +2249,10 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
                         let jsonRequest = JSONRPCRequest(request)
                         await selectedCodexServerViewModel?.handleApprovalRequest(jsonRequest)
                     }
+                    return
+                }
+                if request.method == "item/tool/requestUserInput" {
+                    // Already handled by handleCodexMessage → handleRequestUserInput
                     return
                 }
             }
@@ -2866,6 +2877,7 @@ struct AssistantSegment: Identifiable, Equatable {
         case message
         case thought
         case toolCall
+        case plan
     }
 
     let id: UUID

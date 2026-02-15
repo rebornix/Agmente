@@ -81,6 +81,7 @@ final class ACPSessionViewModel: ObservableObject {
     private var sessionModeCache: [UUID: [String: String]] = [:] // serverId -> sessionId -> currentModeId
     private var pendingPermissionRequests: [ACP.ID: (sessionId: String, toolCallId: String?)] = [:]
     private var pendingApprovalRequests: [JSONRPCID: String?] = [:]
+    @Published var activeUserInputRequest: PendingUserInputRequest?
     private var sessionCommandsCache: [UUID: [String: [SessionCommand]]] = [:] // serverId -> sessionId -> available commands
     // Note: chatCache and stopReasonCache moved to AppViewModel (accessed via cacheDelegate)
 
@@ -736,6 +737,26 @@ final class ACPSessionViewModel: ObservableObject {
         saveChatState()
     }
 
+    /// Finalizes a plan segment with the complete text (used on item/completed).
+    func completePlanItem(id: String?, text: String) {
+        let index = ensureStreamingAssistantMessage()
+        // Replace existing plan segment or append new one
+        if let lastIndex = chatMessages[index].segments.indices.last,
+           chatMessages[index].segments[lastIndex].kind == .plan {
+            chatMessages[index].segments[lastIndex].text = text
+        } else {
+            chatMessages[index].segments.append(AssistantSegment(kind: .plan, text: text))
+        }
+        rebuildAssistantContent(at: index)
+        saveChatState()
+    }
+
+    /// Stores a pending user input request from the server, presented as a sheet.
+    func addUserInputRequest(requestId: JSONRPCID, questions: [UserInputQuestion]) {
+        let request = PendingUserInputRequest(requestId: requestId, questions: questions)
+        activeUserInputRequest = request
+    }
+
     func upsertToolCallFromAppServer(
         toolCallId: String?,
         title: String?,
@@ -839,6 +860,8 @@ final class ACPSessionViewModel: ObservableObject {
                     return "Tool call: \(displayContent) (\(status))"
                 }
                 return "Tool call: \(displayContent)"
+            case .plan:
+                return segment.text
             }
         }
 

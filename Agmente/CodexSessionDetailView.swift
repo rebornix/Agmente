@@ -117,6 +117,11 @@ struct CodexSessionDetailView: View {
         .sheet(item: $fileChangesReviewPayload) { payload in
             FileChangesReviewSheet(items: payload.items)
         }
+        .sheet(item: $sessionViewModel.activeUserInputRequest) { request in
+            UserInputQuestionsSheet(request: request) { requestId, answers in
+                serverViewModel.respondToUserInputRequest(requestId: requestId, answers: answers)
+            }
+        }
         .toolbar {
             if model.canDeleteSessionsLocally, !serverViewModel.sessionId.isEmpty {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -286,6 +291,8 @@ private extension CodexSessionDetailView {
                     skillsPicker
                 }
 
+                planModeToggle
+
                 if !sessionViewModel.availableCommands.isEmpty {
                     commandPicker
                 }
@@ -389,6 +396,16 @@ private extension CodexSessionDetailView {
             promptText: promptText,
             images: images,
             commandName: commandName
+        )
+    }
+
+    private func implementPlan() {
+        // Disable plan mode and send implementation request
+        serverViewModel.isPlanModeEnabled = false
+        serverViewModel.sendPrompt(
+            promptText: "Implement the plan.",
+            images: [],
+            commandName: nil
         )
     }
 
@@ -574,6 +591,25 @@ private extension CodexSessionDetailView {
         }
     }
 
+    var planModeToggle: some View {
+        Button {
+            serverViewModel.isPlanModeEnabled.toggle()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "doc.text.magnifyingglass")
+                    .font(.footnote.weight(.semibold))
+                Text("Plan")
+                    .font(.footnote.weight(.medium))
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(serverViewModel.isPlanModeEnabled ? Color.blue.opacity(0.15) : Color(.systemGray5))
+            .foregroundStyle(serverViewModel.isPlanModeEnabled ? Color.blue : Color.secondary)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+    }
+
     var commandPicker: some View {
         Menu {
             ForEach(sessionViewModel.availableCommands, id: \SessionCommand.id) { (command: SessionCommand) in
@@ -675,7 +711,7 @@ private extension CodexSessionDetailView {
             let fileChangeSegments = message.segments.filter { FileChangeSummary.isFileChangeSegment($0) }
             let contentSegments = message.segments
                 .filter { segment in
-                    if segment.kind == .message || segment.kind == .thought {
+                    if segment.kind == .message || segment.kind == .thought || segment.kind == .plan {
                         return !segment.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     }
                     return true
@@ -707,6 +743,13 @@ private extension CodexSessionDetailView {
                         thoughtGroupCard(
                             group,
                             isStreaming: message.isStreaming && lastIndex == index
+                        )
+                    case .plan(let segment):
+                        ProposedPlanCard(
+                            content: segment.text,
+                            isStreaming: message.isStreaming && lastIndex == index,
+                            onImplement: { implementPlan() },
+                            onContinuePlanning: { /* stay in plan mode, user can type more */ }
                         )
                     }
                 }
