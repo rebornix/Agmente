@@ -1594,7 +1594,7 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
             }
         }
 
-        return all
+        return all.sorted { ($0.scope, $0.name) < ($1.scope, $1.name) }
     }
 
     private func parseThreadResume(result: JSONValue?) -> CodexThreadResumeResult? {

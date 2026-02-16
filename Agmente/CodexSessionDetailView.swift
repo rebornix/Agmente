@@ -514,31 +514,35 @@ private extension CodexSessionDetailView {
 
     var skillsPicker: some View {
         Menu {
-            ForEach(serverViewModel.availableSkills) { skill in
-                Button {
-                    toggleSkill(skill.name)
-                } label: {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(skill.name)
-                                .font(.body.weight(.medium))
-                            if let shortDesc = skill.shortDescription, !shortDesc.isEmpty {
-                                Text(shortDesc)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            } else if !skill.description.isEmpty {
-                                Text(skill.description)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(2)
+            ForEach(AppServerSkillScope.allCases, id: \.self) { scope in
+                let scopeSkills = serverViewModel.availableSkills.filter { $0.scope == scope }
+                if !scopeSkills.isEmpty {
+                    Section(scope.displayName) {
+                        ForEach(scopeSkills) { skill in
+                            Button {
+                                toggleSkill(skill.name)
+                            } label: {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(skill.name)
+                                            .font(.body.weight(.medium))
+                                        if let shortDesc = skill.shortDescription, !shortDesc.isEmpty {
+                                            Text(shortDesc)
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                        } else if !skill.description.isEmpty {
+                                            Text(skill.description)
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                                .lineLimit(2)
+                                        }
+                                    }
+                                    Spacer()
+                                    if serverViewModel.enabledSkillNames.contains(skill.name) {
+                                        Image(systemName: "checkmark")
+                                    }
+                                }
                             }
-                            Text(skill.scope.rawValue.capitalized)
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
-                        }
-                        Spacer()
-                        if serverViewModel.enabledSkillNames.contains(skill.name) {
-                            Image(systemName: "checkmark")
                         }
                     }
                 }

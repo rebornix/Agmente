@@ -53,11 +53,35 @@ public struct AppServerModelListResult: Equatable, Sendable {
 
 // MARK: - Skills
 
-public enum AppServerSkillScope: String, Equatable, Sendable {
+public enum AppServerSkillScope: String, Equatable, Sendable, Comparable, CaseIterable {
     case user
     case repo
     case system
     case admin
+
+    /// Defines a stable display order: user → repo → system → admin.
+    private var sortOrder: Int {
+        switch self {
+        case .user: return 0
+        case .repo: return 1
+        case .system: return 2
+        case .admin: return 3
+        }
+    }
+
+    public static func < (lhs: AppServerSkillScope, rhs: AppServerSkillScope) -> Bool {
+        lhs.sortOrder < rhs.sortOrder
+    }
+
+    /// Human-readable label used as a section header in the skills picker.
+    public var displayName: String {
+        switch self {
+        case .user: return "User"
+        case .repo: return "Repository"
+        case .system: return "System"
+        case .admin: return "Admin"
+        }
+    }
 }
 
 public struct AppServerSkill: Equatable, Sendable, Identifiable, Hashable {
@@ -253,7 +277,7 @@ public enum AppServerResponseParser {
             }
         }
 
-        return all
+        return all.sorted { ($0.scope, $0.name) < ($1.scope, $1.name) }
     }
 
     // MARK: - Thread List
