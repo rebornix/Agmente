@@ -281,17 +281,17 @@ private extension CodexSessionDetailView {
         let canCancelPrompt = serverViewModel.isStreaming && !serverViewModel.sessionId.isEmpty
 
         return VStack(alignment: .leading, spacing: 8) {
-            // Model picker, skills picker, and command picker row
+            // Model picker, plan mode toggle, skills picker, and command picker row
             HStack(spacing: 12) {
                 if !serverViewModel.availableModels.isEmpty {
                     modelPicker
                 }
 
+                planModeToggle
+
                 if !serverViewModel.availableSkills.isEmpty {
                     skillsPicker
                 }
-
-                planModeToggle
 
                 if !sessionViewModel.availableCommands.isEmpty {
                     commandPicker
