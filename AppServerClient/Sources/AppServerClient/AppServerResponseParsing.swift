@@ -53,7 +53,7 @@ public struct AppServerModelListResult: Equatable, Sendable {
 
 // MARK: - Skills
 
-public enum AppServerSkillScope: String, Equatable, Sendable, Comparable {
+public enum AppServerSkillScope: String, Equatable, Sendable, Comparable, CaseIterable {
     case user
     case repo
     case system
@@ -71,6 +71,16 @@ public enum AppServerSkillScope: String, Equatable, Sendable, Comparable {
 
     public static func < (lhs: AppServerSkillScope, rhs: AppServerSkillScope) -> Bool {
         lhs.sortOrder < rhs.sortOrder
+    }
+
+    /// Human-readable label used as a section header in the skills picker.
+    public var displayName: String {
+        switch self {
+        case .user: return "User"
+        case .repo: return "Repository"
+        case .system: return "System"
+        case .admin: return "Admin"
+        }
     }
 }
 

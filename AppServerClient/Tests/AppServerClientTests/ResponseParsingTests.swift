@@ -127,4 +127,18 @@ final class ResponseParsingTests: XCTestCase {
         XCTAssertTrue(AppServerSkillScope.system < AppServerSkillScope.admin)
         XCTAssertFalse(AppServerSkillScope.admin < AppServerSkillScope.user)
     }
+
+    // MARK: - AppServerSkillScope Display Names
+
+    func testSkillScopeDisplayName() {
+        XCTAssertEqual(AppServerSkillScope.user.displayName, "User")
+        XCTAssertEqual(AppServerSkillScope.repo.displayName, "Repository")
+        XCTAssertEqual(AppServerSkillScope.system.displayName, "System")
+        XCTAssertEqual(AppServerSkillScope.admin.displayName, "Admin")
+    }
+
+    func testSkillScopeAllCasesOrder() {
+        let allCases = AppServerSkillScope.allCases
+        XCTAssertEqual(allCases, [.user, .repo, .system, .admin])
+    }
 }
