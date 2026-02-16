@@ -54,6 +54,9 @@ protocol ServerViewModelProtocol: ObservableObject, Identifiable where ID == UUI
     /// Delete a session.
     func deleteSession(_ sessionId: String)
 
+    /// Archive a session (Codex app-server only; no-op for ACP).
+    func archiveSession(_ sessionId: String)
+
     /// Set the active session.
     func setActiveSession(_ id: String, cwd: String?, modes: ACPModesInfo?)
 

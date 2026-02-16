@@ -671,6 +671,38 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
         storage?.deleteSession(sessionId: sessionId, forServerId: id)
     }
 
+    func archiveSession(_ sessionId: String) {
+        guard !sessionId.isEmpty else { return }
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                try await self.archiveThread(threadId: sessionId)
+                appendClosure("Archived Codex thread: \(sessionId)")
+            } catch {
+                appendClosure("Failed to archive thread: \(error.localizedDescription)")
+                return
+            }
+
+            // Remove from local state after successful server archive
+            sessionSummaries.removeAll { $0.id == sessionId }
+            setSessionSummaries(sessionSummaries)
+
+            cacheDelegate?.clearCache(for: id, sessionId: sessionId)
+            currentSessionViewModel?.removeCommands(for: id, sessionId: sessionId)
+
+            if self.sessionId == sessionId {
+                self.sessionId = ""
+                self.selectedSessionId = nil
+                currentSessionViewModel?.resetChatState()
+                Task { await sessionLogger?.endSession() }
+            }
+
+            removeSessionViewModel(for: sessionId)
+            storage?.deleteSession(sessionId: sessionId, forServerId: id)
+        }
+    }
+
     func sendPrompt(promptText: String, images: [ImageAttachment], commandName: String?) {
         Task { @MainActor [weak self] in
             guard let self else { return }
@@ -1076,6 +1108,13 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
             ])
         )
         return parseThreadList(result: response.result)
+    }
+
+    private func archiveThread(threadId: String) async throws {
+        _ = try await callCodex(
+            method: "thread/archive",
+            params: .object(["threadId": .string(threadId)])
+        )
     }
 
     private func listModels(limit: Int = 50) async throws -> [AppServerModel] {

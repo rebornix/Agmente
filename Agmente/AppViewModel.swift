@@ -937,6 +937,12 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
         serverViewModel.deleteSession(sessionId)
     }
 
+    /// Archive a session on the server (Codex app-server only).
+    func archiveSession(_ sessionId: String) {
+        guard let codexViewModel = selectedCodexServerViewModel else { return }
+        codexViewModel.archiveSession(sessionId)
+    }
+
     private func persistActiveServerConfig() {
         guard let serverId = selectedServerId,
               let index = servers.firstIndex(where: { $0.id == serverId }) else { return }
@@ -1043,6 +1049,11 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
     var canDeleteSessionsLocally: Bool {
         guard let serverId = selectedServerId else { return false }
         return sessionListSupportFlag(for: serverId) == false
+    }
+
+    /// Whether the selected server supports archiving sessions (Codex app-server only).
+    var canArchiveSessions: Bool {
+        selectedCodexServerViewModel != nil
     }
 
     private func sortSessionSummaries(_ summaries: [SessionSummary]) -> [SessionSummary] {
