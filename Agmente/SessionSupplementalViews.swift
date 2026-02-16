@@ -136,10 +136,11 @@ enum DisplaySegment: Identifiable {
     case message(AssistantSegment)
     case toolCall(AssistantSegment)
     case thoughtGroup(ThoughtGroup)
+    case plan(AssistantSegment)
 
     var id: UUID {
         switch self {
-        case .message(let segment), .toolCall(let segment):
+        case .message(let segment), .toolCall(let segment), .plan(let segment):
             return segment.id
         case .thoughtGroup(let group):
             return group.id
@@ -178,6 +179,9 @@ extension Array where Element == AssistantSegment {
             case .message:
                 flushGroup()
                 grouped.append(.message(segment))
+            case .plan:
+                flushGroup()
+                grouped.append(.plan(segment))
             }
         }
 

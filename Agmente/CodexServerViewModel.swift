@@ -97,6 +97,10 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
     @Published private(set) var availableSkills: [AppServerSkill] = []
     @Published var enabledSkillNames: Set<String> = []
 
+    // MARK: - Plan Mode (Codex-specific)
+
+    @Published var isPlanModeEnabled: Bool = false
+
     // MARK: - Private State
 
     private let connectionManager: ACPClientManager
@@ -240,6 +244,7 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
             case commandExecution(id: String?, command: String?, output: String?)
             case fileChange(id: String?, path: String?, changeType: String?, diff: String?)
             case toolCall(id: String?, title: String, kind: String?, status: String?, output: String?)
+            case plan(id: String?, text: String)
             case unknown(type: String)
         }
 
@@ -583,6 +588,13 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
                         AssistantSegment(kind: .toolCall, text: displayTitle, toolCall: toolCall),
                     ])
 
+                case .plan(_, let text):
+                    if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        viewModel.addAssistantSegments([
+                            AssistantSegment(kind: .plan, text: text),
+                        ])
+                    }
+
                 case .unknown(let type):
                     unknownItems += 1
                     appendClosure("Unknown Codex item type: \(type)")
@@ -729,7 +741,8 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
                     text: prompt,
                     model: selectedModelId,
                     effort: selectedEffort,
-                    skills: skillNames
+                    skills: skillNames,
+                    isPlanMode: isPlanModeEnabled
                 )
                 bumpSessionTimestamp(sessionId: sessionId)
                 updateSessionTitleIfNeeded(with: prompt)
@@ -1002,7 +1015,7 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
         return id
     }
 
-    private func startTurn(threadId: String, text: String, model: String?, effort: String?, skills: [String]?) async throws {
+    private func startTurn(threadId: String, text: String, model: String?, effort: String?, skills: [String]?, isPlanMode: Bool = false) async throws {
         let input: JSONValue = .array([
             .object([
                 "type": .string("text"),
@@ -1018,6 +1031,12 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
         if let skills, !skills.isEmpty {
             params["skills"] = .array(skills.map { .string($0) })
         }
+        var settings: [String: JSONValue] = [:]
+        if let model { settings["model"] = .string(model) }
+        params["collaborationMode"] = .object([
+            "mode": .string(isPlanMode ? "plan" : "default"),
+            "settings": .object(settings),
+        ])
 
         let response = try await callCodex(method: "turn/start", params: .object(params))
         activeThreadId = threadId
@@ -1101,6 +1120,65 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
         }
     }
 
+    // MARK: - User Input Requests (Plan Mode)
+
+    private func handleRequestUserInput(_ request: JSONRPCRequest) {
+        guard let params = request.params?.objectValue else { return }
+        guard case .array(let questionsArray) = params["questions"] else { return }
+
+        var questions: [UserInputQuestion] = []
+        for q in questionsArray {
+            guard let qObj = q.objectValue else { continue }
+            let questionId = qObj["id"]?.stringValue ?? UUID().uuidString
+            let header = qObj["header"]?.stringValue ?? ""
+            let text = qObj["question"]?.stringValue ?? qObj["text"]?.stringValue ?? ""
+            let multiSelect = qObj["multiSelect"]?.boolValue ?? false
+            var options: [UserInputOption] = []
+            if case .array(let optionsArray) = qObj["options"] {
+                for opt in optionsArray {
+                    if let optObj = opt.objectValue {
+                        let label = optObj["label"]?.stringValue ?? ""
+                        let description = optObj["description"]?.stringValue
+                        let isOther = optObj["isOther"]?.boolValue ?? false
+                        let isSecret = optObj["isSecret"]?.boolValue ?? false
+                        options.append(UserInputOption(label: label, description: description, isOther: isOther, isSecret: isSecret))
+                    }
+                }
+            }
+            questions.append(UserInputQuestion(
+                id: questionId,
+                header: header,
+                text: text,
+                options: options,
+                multiSelect: multiSelect
+            ))
+        }
+
+        guard !questions.isEmpty else { return }
+        currentSessionViewModel?.addUserInputRequest(
+            requestId: request.id,
+            questions: questions
+        )
+    }
+
+    func respondToUserInputRequest(requestId: JSONRPCID, answers: [String: [String]]) {
+        Task { @MainActor in
+            var answersPayload: [String: JSONValue] = [:]
+            for (questionId, selectedAnswers) in answers {
+                answersPayload[questionId] = .object([
+                    "answers": .array(selectedAnswers.map { .string($0) })
+                ])
+            }
+            let payload: [String: JSONValue] = ["answers": .object(answersPayload)]
+            let response = JSONRPCMessage.response(JSONRPCResponse(id: requestId, result: .object(payload)))
+            do {
+                try await service?.sendMessage(response)
+            } catch {
+                // Best-effort.
+            }
+        }
+    }
+
     // MARK: - Codex Message Handling
 
     /// Handle Codex-specific messages (notifications from the backend).
@@ -1132,6 +1210,15 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
                 }
                 if let delta = params["delta"]?.stringValue {
                     currentSessionViewModel?.appendAssistantText(delta, kind: .message)
+                }
+            case "item/plan/delta":
+                if let activeTurnId,
+                   let turnId = params["turnId"]?.stringValue,
+                   turnId != activeTurnId {
+                    return
+                }
+                if let delta = params["delta"]?.stringValue {
+                    currentSessionViewModel?.appendAssistantText(delta, kind: .plan)
                 }
             case "item/started":
                 let turnId = params["turnId"]?.stringValue
@@ -1193,6 +1280,8 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
             case "item/commandExecution/requestApproval", "item/fileChange/requestApproval":
                 // Approval requests are handled by handleApprovalRequest from AppViewModel.
                 break
+            case "item/tool/requestUserInput":
+                handleRequestUserInput(request)
             default:
                 break
             }
@@ -1358,6 +1447,12 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
                         output: output
                     )
                 }
+            }
+
+        case .plan(let itemId, let text):
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                viewModel.completePlanItem(id: itemId, text: trimmed)
             }
 
         case .agentMessage, .userMessage, .unknown:
@@ -1580,6 +1675,9 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
             return .fileChange(id: itemId, path: path, changeType: changeType, diff: diff)
         case "toolcall", "tool", "functioncall", "function":
             return parseGenericToolCall(id: itemId, type: type, object: obj)
+        case "plan":
+            let text = obj["text"]?.stringValue ?? ""
+            return .plan(id: itemId, text: text)
         default:
             if normalizedType.contains("reason") || normalizedType.contains("thought") || normalizedType.contains("analysis") {
                 let text = extractReasoningText(from: obj)
