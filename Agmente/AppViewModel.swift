@@ -617,11 +617,6 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
         sessionViewModel?.setSupportsImageAttachment(supportsImages)
     }
 
-    /// True when the active session hasn't been materialized on the server yet.
-    var isPendingSession: Bool {
-        selectedServerViewModelAny?.isPendingSession ?? false
-    }
-
     var selectedServer: ACPServerConfiguration? {
         guard let id = selectedServerId else { return nil }
         return servers.first(where: { $0.id == id })
@@ -1727,10 +1722,10 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
 
     /// Update the working directory for a pending (local-only) session.
     func updatePendingSessionWorkingDirectory(_ newValue: String) {
-        guard isPendingSession else { return }
+        guard serverIsPendingSession else { return }
         let sanitized = sanitizeWorkingDirectory(newValue)
         pendingLocalSessionCwds[sessionId] = sanitized
-        
+
         guard let serverId = selectedServerId else { return }
         rememberUsedWorkingDirectory(sanitized, forServerId: serverId)
         
