@@ -57,7 +57,22 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
     }
 
     @Published private(set) var servers: [ACPServerConfiguration] = []
-    @Published var selectedServerId: UUID?
+    @Published var selectedServerId: UUID? {
+        didSet {
+            // Update cached server properties when switching servers
+            if let serverId = selectedServerId,
+               let viewModel = serverViewModels[serverId] {
+                updateCachedServerProperties(from: viewModel)
+            } else {
+                // Clear cached properties when no server is selected
+                serverSessionSummaries = []
+                serverSessionId = ""
+                serverIsStreaming = false
+                serverAgentInfo = nil
+                serverIsPendingSession = false
+            }
+        }
+    }
 
     // Phase 2: ServerViewModel instances (one per server)
     // Uses existential type to support both ACP and Codex server view models
@@ -87,31 +102,23 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
 
     // MARK: - Unified Server Properties (work for both ACP and Codex servers)
     // Use these in UI instead of selectedServerViewModel?.property
+    // These are @Published cached values that update when child view models change,
+    // avoiding blanket objectWillChange forwarding for better performance.
 
     /// Session summaries for the selected server (works for both ACP and Codex).
-    var serverSessionSummaries: [SessionSummary] {
-        selectedServerViewModelAny?.sessionSummaries ?? []
-    }
+    @Published private(set) var serverSessionSummaries: [SessionSummary] = []
 
     /// Current session ID for the selected server (works for both ACP and Codex).
-    var serverSessionId: String {
-        selectedServerViewModelAny?.sessionId ?? ""
-    }
+    @Published private(set) var serverSessionId: String = ""
 
     /// Whether the selected server is currently streaming (works for both ACP and Codex).
-    var serverIsStreaming: Bool {
-        selectedServerViewModelAny?.isStreaming ?? false
-    }
+    @Published private(set) var serverIsStreaming: Bool = false
 
     /// Agent info for the selected server (works for both ACP and Codex).
-    var serverAgentInfo: AgentProfile? {
-        selectedServerViewModelAny?.agentInfo
-    }
+    @Published private(set) var serverAgentInfo: AgentProfile? = nil
 
     /// Whether there's a pending session for the selected server (works for both ACP and Codex).
-    var serverIsPendingSession: Bool {
-        selectedServerViewModelAny?.isPendingSession ?? false
-    }
+    @Published private(set) var serverIsPendingSession: Bool = false
 
     // Initialization
     @Published var clientName: String = "Agmente iOS"
@@ -371,23 +378,75 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
         serverViewModelCancellables.removeValue(forKey: serverId)
     }
     
-    /// Sets up observation of a server view model to forward objectWillChange.
+    /// Sets up observation of a server view model to update cached server properties.
+    /// Instead of forwarding all objectWillChange events, we selectively observe specific
+    /// published properties to minimize UI redraw fanout.
     private func observeServerViewModel(_ viewModel: any ServerViewModelProtocol) {
         let serverId = viewModel.id
-        // Forward objectWillChange from child view model to trigger UI updates
-        // We need to handle both concrete types due to Swift existential limitations
+
+        // Observe specific properties from child view model to update our cached @Published values.
+        // This approach ensures UI only redraws when relevant state changes, rather than on every
+        // child update (including high-frequency streaming deltas).
         if let serverVM = viewModel as? ServerViewModel {
-            serverViewModelCancellables[serverId] = serverVM.objectWillChange
+            let cancellable = serverVM.objectWillChange
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] _ in
-                    self?.objectWillChange.send()
+                    guard let self = self,
+                          self.selectedServerId == serverId else { return }
+                    self.updateCachedServerProperties(from: serverVM)
                 }
+            serverViewModelCancellables[serverId] = cancellable
         } else if let codexVM = viewModel as? CodexServerViewModel {
-            serverViewModelCancellables[serverId] = codexVM.objectWillChange
+            let cancellable = codexVM.objectWillChange
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] _ in
-                    self?.objectWillChange.send()
+                    guard let self = self,
+                          self.selectedServerId == serverId else { return }
+                    self.updateCachedServerProperties(from: codexVM)
                 }
+            serverViewModelCancellables[serverId] = cancellable
+        }
+
+        // Update cached values immediately for the currently selected server
+        if selectedServerId == serverId {
+            updateCachedServerProperties(from: viewModel)
+        }
+    }
+
+    /// Updates cached server properties from the given view model.
+    /// Only publishes changes for properties that actually changed, reducing unnecessary redraws.
+    private func updateCachedServerProperties(from viewModel: any ServerViewModelProtocol) {
+        // Update session summaries if changed
+        let newSummaries = viewModel.sessionSummaries
+        if serverSessionSummaries != newSummaries {
+            serverSessionSummaries = newSummaries
+        }
+
+        // Update session ID if changed
+        let newSessionId = viewModel.sessionId
+        if serverSessionId != newSessionId {
+            serverSessionId = newSessionId
+        }
+
+        // Update streaming state if changed
+        let newIsStreaming = viewModel.isStreaming
+        if serverIsStreaming != newIsStreaming {
+            serverIsStreaming = newIsStreaming
+        }
+
+        // Update agent info if changed
+        let newAgentInfo = viewModel.agentInfo
+        // AgentProfile doesn't conform to Equatable, so we compare by reference/presence
+        if (serverAgentInfo == nil) != (newAgentInfo == nil) ||
+           (serverAgentInfo?.displayName != newAgentInfo?.displayName) ||
+           (serverAgentInfo?.version != newAgentInfo?.version) {
+            serverAgentInfo = newAgentInfo
+        }
+
+        // Update pending session state if changed
+        let newIsPendingSession = viewModel.isPendingSession
+        if serverIsPendingSession != newIsPendingSession {
+            serverIsPendingSession = newIsPendingSession
         }
     }
 
