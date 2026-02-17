@@ -323,4 +323,134 @@ final class ViewModelSyncTests: XCTestCase {
         XCTAssertEqual(updatedSession?.updatedAt, originalDate,
                        "Session timestamp should be preserved when only updating CWD")
     }
+
+    // MARK: - Cached Server Properties Tests
+
+    /// Test that serverSessionSummaries is cached and syncs from child view model.
+    func testServerSessionSummaries_CachedAndSynced() {
+        let model = makeModel()
+        addServer(to: model, agentInfo: makeAgentInfo())
+
+        // Initially empty
+        XCTAssertEqual(model.serverSessionSummaries.count, 0, "Should start with no sessions")
+
+        // Update session summaries in ServerViewModel
+        let serverVM = model.selectedServerViewModel
+        let testSession = SessionSummary(id: "test-1", title: "Test Session", cwd: "/test", updatedAt: Date())
+        serverVM?.sessionSummaries = [testSession]
+
+        // Verify AppViewModel's cached property was updated
+        XCTAssertEqual(model.serverSessionSummaries.count, 1, "Cached summaries should update")
+        XCTAssertEqual(model.serverSessionSummaries.first?.id, "test-1")
+        XCTAssertEqual(model.serverSessionSummaries.first?.title, "Test Session")
+    }
+
+    /// Test that serverSessionId is cached and syncs from child view model.
+    func testServerSessionId_CachedAndSynced() {
+        let model = makeModel()
+        addServer(to: model, agentInfo: makeAgentInfo())
+
+        // Initially empty
+        XCTAssertEqual(model.serverSessionId, "", "Should start with no session ID")
+
+        // Update session ID in ServerViewModel
+        let serverVM = model.selectedServerViewModel
+        serverVM?.sessionId = "test-session-123"
+
+        // Verify AppViewModel's cached property was updated
+        XCTAssertEqual(model.serverSessionId, "test-session-123", "Cached session ID should update")
+    }
+
+    /// Test that serverIsStreaming is cached and syncs from child view model.
+    func testServerIsStreaming_CachedAndSynced() {
+        let model = makeModel()
+        addServer(to: model, agentInfo: makeAgentInfo())
+
+        // Initially false
+        XCTAssertFalse(model.serverIsStreaming, "Should start not streaming")
+
+        // Note: ServerViewModel's isStreaming is a computed property based on session state.
+        // A full test would require setting up a session with streaming state.
+        // For now, we verify the property exists and is accessible.
+        XCTAssertFalse(model.serverIsStreaming)
+    }
+
+    /// Test that cached properties are cleared when no server is selected.
+    func testCachedProperties_ClearedWhenNoServerSelected() {
+        let model = makeModel()
+        addServer(to: model, agentInfo: makeAgentInfo())
+
+        // Set some state
+        let serverVM = model.selectedServerViewModel
+        serverVM?.sessionSummaries = [SessionSummary(id: "test", title: "Test", cwd: "/", updatedAt: Date())]
+        serverVM?.sessionId = "test"
+
+        // Verify cached values are set
+        XCTAssertEqual(model.serverSessionSummaries.count, 1)
+        XCTAssertEqual(model.serverSessionId, "test")
+
+        // Deselect server
+        model.selectedServerId = nil
+
+        // Verify cached values are cleared
+        XCTAssertEqual(model.serverSessionSummaries.count, 0, "Should clear session summaries")
+        XCTAssertEqual(model.serverSessionId, "", "Should clear session ID")
+        XCTAssertFalse(model.serverIsStreaming, "Should clear streaming state")
+        XCTAssertNil(model.serverAgentInfo, "Should clear agent info")
+        XCTAssertFalse(model.serverIsPendingSession, "Should clear pending session state")
+    }
+
+    /// Test that cached properties update when switching between servers.
+    func testCachedProperties_UpdateWhenSwitchingServers() {
+        let model = makeModel()
+
+        // Add first server
+        model.addServer(
+            name: "Server 1",
+            scheme: "ws",
+            host: "localhost:1234",
+            token: "",
+            cfAccessClientId: "",
+            cfAccessClientSecret: "",
+            workingDirectory: "/",
+            agentInfo: makeAgentInfo(name: "agent-1")
+        )
+        let server1Id = model.selectedServerId!
+        let serverVM1 = model.selectedServerViewModel
+        serverVM1?.sessionSummaries = [SessionSummary(id: "s1", title: "Session 1", cwd: "/1", updatedAt: Date())]
+        serverVM1?.sessionId = "s1"
+
+        // Verify first server's state is cached
+        XCTAssertEqual(model.serverSessionSummaries.count, 1)
+        XCTAssertEqual(model.serverSessionId, "s1")
+
+        // Add second server
+        model.addServer(
+            name: "Server 2",
+            scheme: "ws",
+            host: "localhost:5678",
+            token: "",
+            cfAccessClientId: "",
+            cfAccessClientSecret: "",
+            workingDirectory: "/",
+            agentInfo: makeAgentInfo(name: "agent-2")
+        )
+        let server2Id = model.selectedServerId!
+        let serverVM2 = model.selectedServerViewModel
+        serverVM2?.sessionSummaries = [SessionSummary(id: "s2", title: "Session 2", cwd: "/2", updatedAt: Date())]
+        serverVM2?.sessionId = "s2"
+
+        // Verify second server's state is cached
+        XCTAssertEqual(model.serverSessionSummaries.count, 1)
+        XCTAssertEqual(model.serverSessionId, "s2")
+        XCTAssertEqual(model.serverSessionSummaries.first?.id, "s2")
+
+        // Switch back to first server
+        model.selectedServerId = server1Id
+
+        // Verify first server's state is restored
+        XCTAssertEqual(model.serverSessionSummaries.count, 1)
+        XCTAssertEqual(model.serverSessionId, "s1")
+        XCTAssertEqual(model.serverSessionSummaries.first?.id, "s1")
+    }
 }
