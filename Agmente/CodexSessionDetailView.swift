@@ -12,6 +12,7 @@ struct CodexSessionDetailView: View {
     @FocusState private var isTextEditorFocused: Bool
     @State private var textEditorWidth: CGFloat = 0
     @State private var showDeleteSessionConfirm = false
+    @State private var showArchiveSessionConfirm = false
     @State private var expandedThoughts: Set<UUID> = []
     @State private var fileChangesReviewPayload: FileChangesReviewPayload?
     @State private var showUndoUnavailableAlert = false
@@ -124,13 +125,23 @@ struct CodexSessionDetailView: View {
             }
         }
         .toolbar {
-            if model.canDeleteSessionsLocally, !serverViewModel.sessionId.isEmpty {
+            if !serverViewModel.sessionId.isEmpty,
+               model.canArchiveSessions || model.canDeleteSessionsLocally {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
-                        Button(role: .destructive) {
-                            showDeleteSessionConfirm = true
-                        } label: {
-                            Label("Delete Session", systemImage: "trash")
+                        if model.canArchiveSessions {
+                            Button(role: .destructive) {
+                                showArchiveSessionConfirm = true
+                            } label: {
+                                Label("Archive Session", systemImage: "archivebox")
+                            }
+                        }
+                        if model.canDeleteSessionsLocally {
+                            Button(role: .destructive) {
+                                showDeleteSessionConfirm = true
+                            } label: {
+                                Label("Delete Session", systemImage: "trash")
+                            }
                         }
                     } label: {
                         Image(systemName: "ellipsis")
@@ -151,6 +162,20 @@ struct CodexSessionDetailView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("This removes the session and its cached chat history from this device.")
+        }
+        .confirmationDialog(
+            "Archive Session?",
+            isPresented: $showArchiveSessionConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Archive Session", role: .destructive) {
+                let idToArchive = serverViewModel.sessionId
+                guard !idToArchive.isEmpty else { return }
+                model.archiveSession(idToArchive)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This archives the session on the server. It will no longer appear in your session list.")
         }
         .alert("Undo not available", isPresented: $showUndoUnavailableAlert) {
             Button("OK", role: .cancel) {}

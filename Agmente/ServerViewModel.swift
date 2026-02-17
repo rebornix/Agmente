@@ -847,6 +847,11 @@ final class ServerViewModel: ObservableObject, Identifiable, ServerViewModelProt
         storage?.deleteSession(sessionId: sessionId, forServerId: id)
     }
 
+    /// Archive a session. ACP protocol does not support archive — this is a no-op.
+    func archiveSession(_ sessionId: String) {
+        // ACP protocol has no archive operation; use deleteSession for local removal.
+    }
+
     /// Abort a pending session creation and clean up placeholder UI state.
     private func failPendingSessionCreation(placeholderId: String, errorMessage: String) {
         guard pendingLocalSessions.contains(placeholderId) else { return }
