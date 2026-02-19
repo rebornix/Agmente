@@ -2079,18 +2079,35 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
         if let sandboxPolicy {
             params["sandboxPolicy"] = sandboxPolicy
         }
-        if isPlanMode {
-            var settings: [String: JSONValue] = [:]
-            if let model { settings["model"] = .string(model) }
-            params["collaborationMode"] = .object([
-                "mode": .string("plan"),
-                "settings": .object(settings),
-            ])
+        if let collaborationMode = collaborationModePayload(
+            isPlanMode: isPlanMode,
+            modelOverride: model
+        ) {
+            params["collaborationMode"] = collaborationMode
         }
 
         let response = try await callCodex(method: "turn/start", params: .object(params))
         activeThreadId = threadId
         activeTurnId = response.result?.objectValue?["turn"]?.objectValue?["id"]?.stringValue
+    }
+
+    func collaborationModePayload(isPlanMode: Bool, modelOverride: String?) -> JSONValue? {
+        guard let modelId = firstNonEmptyOptionalString(
+            modelOverride,
+            selectedModel?.id,
+            defaultModel?.id
+        ) else {
+            return nil
+        }
+
+        return .object([
+            "mode": .string(isPlanMode ? "plan" : "default"),
+            "settings": .object([
+                "model": .string(modelId),
+                "reasoning_effort": .null,
+                "developer_instructions": .null,
+            ]),
+        ])
     }
 
     private func interruptTurn(threadId: String, turnId: String) async throws {

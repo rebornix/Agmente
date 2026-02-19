@@ -632,4 +632,60 @@ final class CodexServerViewModelTests: XCTestCase {
         XCTAssertEqual(planSegment.kind, .plan)
         XCTAssertEqual(planSegment.text, "# Plan\n\n1. first\n2. second")
     }
+
+    func testCodexServerViewModel_CollaborationModePayloadUsesDefaultMode() {
+        let model = makeModel()
+        addServer(to: model)
+
+        let service = makeService()
+        let initRequest = ACP.AnyRequest(id: .int(1), method: "initialize", params: nil)
+        model.acpService(service, willSend: initRequest)
+        let result: ACP.Value = .object([
+            "userAgent": .string("codex/1.0.0"),
+        ])
+        model.acpService(service, didReceiveMessage: .response(ACP.AnyResponse(id: .int(1), result: result)))
+
+        guard let codexVM = model.selectedCodexServerViewModel else {
+            XCTFail("Expected CodexServerViewModel")
+            return
+        }
+
+        guard let payload = codexVM.collaborationModePayload(isPlanMode: false, modelOverride: "gpt-5.2-codex"),
+              let object = payload.objectValue,
+              let settings = object["settings"]?.objectValue else {
+            XCTFail("Expected collaboration mode payload")
+            return
+        }
+
+        XCTAssertEqual(object["mode"], .string("default"))
+        XCTAssertEqual(settings["model"], .string("gpt-5.2-codex"))
+        XCTAssertEqual(settings["reasoning_effort"], .null)
+        XCTAssertEqual(settings["developer_instructions"], .null)
+    }
+
+    func testCodexServerViewModel_CollaborationModePayloadUsesPlanMode() {
+        let model = makeModel()
+        addServer(to: model)
+
+        let service = makeService()
+        let initRequest = ACP.AnyRequest(id: .int(1), method: "initialize", params: nil)
+        model.acpService(service, willSend: initRequest)
+        let result: ACP.Value = .object([
+            "userAgent": .string("codex/1.0.0"),
+        ])
+        model.acpService(service, didReceiveMessage: .response(ACP.AnyResponse(id: .int(1), result: result)))
+
+        guard let codexVM = model.selectedCodexServerViewModel else {
+            XCTFail("Expected CodexServerViewModel")
+            return
+        }
+
+        guard let payload = codexVM.collaborationModePayload(isPlanMode: true, modelOverride: "gpt-5.2-codex"),
+              let object = payload.objectValue else {
+            XCTFail("Expected collaboration mode payload")
+            return
+        }
+
+        XCTAssertEqual(object["mode"], .string("plan"))
+    }
 }
