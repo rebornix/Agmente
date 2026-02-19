@@ -97,6 +97,44 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
     @Published private(set) var availableSkills: [AppServerSkill] = []
     @Published var enabledSkillNames: Set<String> = []
 
+    // MARK: - Permissions Selection (Codex-specific)
+
+    enum PermissionPreset: String, CaseIterable, Identifiable {
+        case defaultPermissions
+        case fullAccess
+
+        var id: String { rawValue }
+
+        var displayName: String {
+            switch self {
+            case .defaultPermissions:
+                return "Default permissions"
+            case .fullAccess:
+                return "Full access"
+            }
+        }
+
+        var turnApprovalPolicy: String {
+            switch self {
+            case .defaultPermissions:
+                return "on-request"
+            case .fullAccess:
+                return "never"
+            }
+        }
+
+        var turnSandboxPolicy: JSONValue {
+            switch self {
+            case .defaultPermissions:
+                return .object(["type": .string("workspaceWrite")])
+            case .fullAccess:
+                return .object(["type": .string("dangerFullAccess")])
+            }
+        }
+    }
+
+    @Published var permissionPreset: PermissionPreset = .defaultPermissions
+
     // MARK: - Plan Mode (Codex-specific)
 
     @Published var isPlanModeEnabled: Bool = false
@@ -117,6 +155,10 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
     private var openSessionRequestToken: UInt64 = 0
     private var needsInitializedAck: Bool = false
     private var reasoningCache: [String: String] = [:]
+    private static let proposedPlanRegex = try? NSRegularExpression(
+        pattern: "<proposed_plan>([\\s\\S]*?)</proposed_plan>",
+        options: [.caseInsensitive]
+    )
 
     func markInitializedAckNeeded() {
         needsInitializedAck = true
@@ -250,6 +292,7 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
         enum Item: Equatable {
             case userMessage(id: String?, text: String)
             case agentMessage(id: String?, text: String)
+            case plan(id: String?, text: String)
             case reasoning(id: String?, text: String)
             case commandExecution(id: String?, command: String?, output: String?)
             case fileChange(id: String?, path: String?, changeType: String?, diff: String?)
@@ -1126,6 +1169,27 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
                         )
                     )
 
+                case .plan(_, let text):
+                    stats.agentMessages += 1
+                    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if trimmed.isEmpty {
+                        stats.emptyAgentMessages += 1
+                        continue
+                    }
+                    let segment = AssistantSegment(kind: .plan, text: trimmed)
+                    let message = ChatMessage(
+                        role: .assistant,
+                        content: assistantContent(from: [segment]),
+                        isStreaming: false,
+                        segments: [segment]
+                    )
+                    nodes.append(
+                        ResumeMessageNode(
+                            key: resumeNodeKey(turnId: turn.id, itemIndex: itemIndex, item: item),
+                            message: message
+                        )
+                    )
+
                 case .reasoning(_, let text):
                     stats.reasoningItems += 1
                     guard !text.isEmpty else { continue }
@@ -1258,6 +1322,9 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
         case .agentMessage(let itemId, _):
             if let itemId, !itemId.isEmpty { return "turn:\(turnId):assistant:\(itemId)" }
             return "turn:\(turnId):idx:\(itemIndex):assistant"
+        case .plan(let itemId, _):
+            if let itemId, !itemId.isEmpty { return "turn:\(turnId):plan:\(itemId)" }
+            return "turn:\(turnId):idx:\(itemIndex):plan"
         case .unknown(let type):
             return "turn:\(turnId):idx:\(itemIndex):unknown:\(type)"
         }
@@ -1453,7 +1520,9 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
                     model: selectedModelId,
                     effort: selectedEffort,
                     skills: skillNames,
-                    isPlanMode: isPlanModeEnabled
+                    isPlanMode: isPlanModeEnabled,
+                    approvalPolicy: permissionPreset.turnApprovalPolicy,
+                    sandboxPolicy: permissionPreset.turnSandboxPolicy
                 )
                 bumpSessionTimestamp(sessionId: sessionId)
                 updateSessionTitleIfNeeded(with: prompt)
@@ -1769,6 +1838,8 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
                 switch item {
                 case .agentMessage, .reasoning, .commandExecution, .fileChange, .toolCall:
                     itemCount += 1
+                case .plan:
+                    itemCount += 1
                 case .userMessage, .unknown:
                     break
                 }
@@ -1983,7 +2054,9 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
         model: String?,
         effort: String?,
         skills: [String]?,
-        isPlanMode: Bool = false
+        isPlanMode: Bool = false,
+        approvalPolicy: String? = nil,
+        sandboxPolicy: JSONValue? = nil
     ) async throws {
         let input: JSONValue = .array([
             .object([
@@ -1999,6 +2072,12 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
         if let effort { params["effort"] = .string(effort) }
         if let skills, !skills.isEmpty {
             params["skills"] = .array(skills.map { .string($0) })
+        }
+        if let approvalPolicy {
+            params["approvalPolicy"] = .string(approvalPolicy)
+        }
+        if let sandboxPolicy {
+            params["sandboxPolicy"] = sandboxPolicy
         }
         if isPlanMode {
             var settings: [String: JSONValue] = [:]
@@ -2281,6 +2360,8 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
                     trace("notif apply method=item/agentMessage/delta chars=\(delta.count)")
                     currentSessionViewModel?.appendAssistantText(delta, kind: .message)
                 }
+            case "item/plan/delta":
+                handlePlanDeltaNotification(params, method: "item/plan/delta")
             case "item/started":
                 let turnId = params["turnId"]?.stringValue
                 alignActiveTurnIfNeeded(
@@ -2303,6 +2384,8 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
                     trace("notif apply method=item/completed")
                     handleCodexItemEvent(itemValue, status: "completed", turnId: turnId)
                 }
+            case "turn/plan/updated":
+                handleTurnPlanUpdatedNotification(params)
             case "turn/completed":
                 let turnObject = params["turn"]?.objectValue
                 let completedTurnId = turnObject?["id"]?.stringValue
@@ -2414,6 +2497,92 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
         return nil
     }
 
+    private func handlePlanDeltaNotification(_ params: [String: JSONValue], method: String) {
+        let turnId = firstNonEmptyOptionalString(
+            params["turnId"]?.stringValue,
+            params["turn_id"]?.stringValue,
+            params["id"]?.stringValue
+        )
+        alignActiveTurnIfNeeded(
+            incomingTurnId: turnId,
+            method: method,
+            ensureStreamingMessage: true
+        )
+
+        guard let delta = extractPlanDeltaText(from: params), !delta.isEmpty else { return }
+        trace("notif apply method=\(method) chars=\(delta.count)")
+        currentSessionViewModel?.appendAssistantText(delta, kind: .plan)
+    }
+
+    private func handleTurnPlanUpdatedNotification(_ params: [String: JSONValue]) {
+        let turnId = params["turnId"]?.stringValue
+        alignActiveTurnIfNeeded(
+            incomingTurnId: turnId,
+            method: "turn/plan/updated",
+            ensureStreamingMessage: true
+        )
+
+        guard let text = buildPlanText(from: params),
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        currentSessionViewModel?.completePlanItem(id: turnId, text: text)
+        trace("notif apply method=turn/plan/updated chars=\(text.count)")
+    }
+
+    private func extractPlanDeltaText(from params: [String: JSONValue]) -> String? {
+        if let delta = params["delta"]?.stringValue { return delta }
+        if let text = params["text"]?.stringValue { return text }
+        if let content = params["content"]?.stringValue { return content }
+        if let message = params["message"]?.stringValue { return message }
+        return nil
+    }
+
+    private func buildPlanText(from params: [String: JSONValue]) -> String? {
+        let explanation = params["explanation"]?.stringValue?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        var stepLines: [String] = []
+
+        if case let .array(planItems)? = params["plan"] {
+            for planItem in planItems {
+                guard let planObject = planItem.objectValue else { continue }
+                guard let formatted = formatPlanStep(planObject) else { continue }
+                stepLines.append(formatted)
+            }
+        }
+
+        if let explanation, !explanation.isEmpty, !stepLines.isEmpty {
+            return "\(explanation)\n\n" + stepLines.joined(separator: "\n")
+        }
+        if !stepLines.isEmpty {
+            return stepLines.joined(separator: "\n")
+        }
+        if let explanation, !explanation.isEmpty {
+            return explanation
+        }
+        return nil
+    }
+
+    private func formatPlanStep(_ stepObject: [String: JSONValue]) -> String? {
+        let step = stepObject["step"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let description = stepObject["description"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let status = stepObject["status"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        let core: String
+        if !step.isEmpty && !description.isEmpty {
+            core = step == description ? step : "\(step): \(description)"
+        } else if !step.isEmpty {
+            core = step
+        } else if !description.isEmpty {
+            core = description
+        } else {
+            return nil
+        }
+
+        if !status.isEmpty {
+            return "- \(core) (\(status))"
+        }
+        return "- \(core)"
+    }
+
     private func handleCodexItemEvent(_ itemValue: JSONValue, status: String, turnId: String?) {
         guard let viewModel = currentSessionViewModel else { return }
         guard let item = parseThreadItem(itemValue) else { return }
@@ -2522,6 +2691,9 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
                 }
             }
 
+        case .plan(_, let text):
+            applyPlanItem(text, status: status, to: viewModel)
+
         case .agentMessage(_, let text):
             applyAgentMessageItem(text, status: status, to: viewModel)
 
@@ -2531,6 +2703,11 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
     }
 
     private func applyAgentMessageItem(_ text: String, status: String, to viewModel: ACPSessionViewModel) {
+        if let planText = extractProposedPlanText(from: text) {
+            applyPlanItem(planText, status: status, to: viewModel)
+            return
+        }
+
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         trace("item agentMessage status=\(status) chars=\(trimmed.count)")
@@ -2555,6 +2732,51 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
             viewModel.appendAssistantText(trimmed, kind: .message)
             trace("item agentMessage appended status=\(status)")
         }
+    }
+
+    private func applyPlanItem(_ text: String, status: String, to viewModel: ACPSessionViewModel) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        trace("item plan status=\(status) chars=\(trimmed.count)")
+
+        if let last = viewModel.chatMessages.last,
+           last.role == .assistant,
+           last.isStreaming,
+           let lastPlanSegment = last.segments.last,
+           lastPlanSegment.kind == .plan
+        {
+            let existing = lastPlanSegment.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if existing == trimmed || existing.hasSuffix(trimmed) {
+                return
+            }
+            if !existing.isEmpty, trimmed.hasPrefix(existing) {
+                let suffix = String(trimmed.dropFirst(existing.count))
+                if !suffix.isEmpty {
+                    viewModel.appendAssistantText(suffix, kind: .plan)
+                }
+                return
+            }
+        }
+
+        if status == "completed" {
+            viewModel.completePlanItem(id: nil, text: trimmed)
+            trace("item plan completed")
+        } else if status == "in_progress" {
+            viewModel.appendAssistantText(trimmed, kind: .plan)
+            trace("item plan appended status=\(status)")
+        }
+    }
+
+    private func extractProposedPlanText(from text: String) -> String? {
+        guard let regex = Self.proposedPlanRegex else { return nil }
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        guard let match = regex.firstMatch(in: text, options: [], range: range),
+              match.numberOfRanges > 1,
+              let bodyRange = Range(match.range(at: 1), in: text) else {
+            return nil
+        }
+        let extracted = text[bodyRange].trimmingCharacters(in: .whitespacesAndNewlines)
+        return extracted.isEmpty ? nil : extracted
     }
 
     private func alignActiveTurnIfNeeded(
@@ -2789,11 +3011,24 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
         case "usermessage":
             let text = extractTextContent(from: obj)
             return .userMessage(id: itemId, text: text)
+        case "message":
+            let role = obj["role"]?.stringValue?.lowercased()
+            let text = extractTextContent(from: obj)
+            if role?.contains("user") == true {
+                return .userMessage(id: itemId, text: text)
+            }
+            if role?.contains("assistant") == true || role?.contains("agent") == true || role == nil {
+                return .agentMessage(id: itemId, text: text)
+            }
+            return .agentMessage(id: itemId, text: text)
         case "agentmessage", "assistantmessage":
             let directText = obj["text"]?.stringValue ?? ""
             let contentText = extractTextContent(from: obj)
             let text = directText.isEmpty ? contentText : directText
             return .agentMessage(id: itemId, text: text)
+        case "plan":
+            let text = extractTextContent(from: obj)
+            return .plan(id: itemId, text: text)
         case "reasoning", "thought", "analysis":
             let text = extractReasoningText(from: obj)
             return .reasoning(id: itemId, text: text)
@@ -2813,6 +3048,9 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
             }
             if normalizedType.contains("user") {
                 return .userMessage(id: itemId, text: extractTextContent(from: obj))
+            }
+            if normalizedType.contains("plan") {
+                return .plan(id: itemId, text: extractTextContent(from: obj))
             }
             if normalizedType.contains("reason") || normalizedType.contains("thought") || normalizedType.contains("analysis") {
                 let text = extractReasoningText(from: obj)

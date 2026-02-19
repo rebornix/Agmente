@@ -307,25 +307,47 @@ private extension CodexSessionDetailView {
         let canCancelPrompt = serverViewModel.isStreaming && !serverViewModel.sessionId.isEmpty
 
         return VStack(alignment: .leading, spacing: 8) {
-            // Model picker, plan mode toggle, skills picker, and command picker row
-            HStack(spacing: 12) {
-                if !serverViewModel.availableModels.isEmpty {
-                    modelPicker
+            // Model picker, plan mode toggle, skills picker, permissions, and command picker row
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 12) {
+                    if !serverViewModel.availableModels.isEmpty {
+                        modelPicker
+                    }
+
+                    planModeToggle
+
+                    if !serverViewModel.availableSkills.isEmpty {
+                        skillsPicker
+                    }
+
+                    permissionsPicker
+
+                    if !sessionViewModel.availableCommands.isEmpty {
+                        commandPicker
+                    }
                 }
-
-                planModeToggle
-
-                if !serverViewModel.availableSkills.isEmpty {
-                    skillsPicker
-                }
-
-                if !sessionViewModel.availableCommands.isEmpty {
-                    commandPicker
-                }
-
-                Spacer()
+                .padding(.horizontal, 10)
             }
-            .padding(.horizontal, 10)
+            .overlay {
+                HStack(spacing: 0) {
+                    LinearGradient(
+                        colors: [Color(.systemGray6), Color(.systemGray6).opacity(0)],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                    .frame(width: 14)
+
+                    Spacer(minLength: 0)
+
+                    LinearGradient(
+                        colors: [Color(.systemGray6).opacity(0), Color(.systemGray6)],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                    .frame(width: 14)
+                }
+                .allowsHitTesting(false)
+            }
 
             if let selectedCommand {
                 selectedCommandView(for: selectedCommand)
@@ -619,6 +641,46 @@ private extension CodexSessionDetailView {
         } else {
             serverViewModel.enabledSkillNames.insert(skillName)
         }
+    }
+
+    var permissionsPicker: some View {
+        Menu {
+            ForEach(CodexServerViewModel.PermissionPreset.allCases) { preset in
+                Button {
+                    serverViewModel.permissionPreset = preset
+                } label: {
+                    HStack {
+                        if preset == .fullAccess {
+                            Label(preset.displayName, systemImage: "exclamationmark.triangle.fill")
+                        } else {
+                            Text(preset.displayName)
+                        }
+                        Spacer()
+                        if serverViewModel.permissionPreset == preset {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: serverViewModel.permissionPreset == .fullAccess ? "exclamationmark.triangle.fill" : "lock.shield")
+                    .font(.footnote.weight(.semibold))
+                Text(serverViewModel.permissionPreset.displayName)
+                    .font(.footnote.weight(.medium))
+                    .lineLimit(1)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(serverViewModel.permissionPreset == .fullAccess ? Color.orange.opacity(0.18) : Color(.systemGray5))
+            .foregroundStyle(serverViewModel.permissionPreset == .fullAccess ? Color.orange : Color.secondary)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .menuStyle(.borderlessButton)
+        .accessibilityIdentifier("codexPermissionsPicker")
     }
 
     var planModeToggle: some View {
