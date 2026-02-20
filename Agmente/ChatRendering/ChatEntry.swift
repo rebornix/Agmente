@@ -158,25 +158,29 @@ struct ChatEntry: Identifiable, Hashable {
     private static func toolCallSignature(segment: AssistantSegment, isStreaming: Bool) -> String {
         let tool = segment.toolCall
         let optionSignature = tool?.permissionOptions?.map { "\($0.optionId):\($0.name)" }.joined(separator: ",") ?? ""
-        return [
-            segment.id.uuidString,
-            segment.kind.rawValue,
-            segment.text,
-            tool?.toolCallId ?? "",
-            tool?.title ?? "",
-            tool?.kind ?? "",
-            tool?.status ?? "",
-            tool?.output ?? "",
-            optionSignature,
-            tool?.acpPermissionRequestId?.description ?? "",
-            tool?.permissionRequestId.map { String(describing: $0) } ?? "",
-            tool?.approvalRequestId.map { String(describing: $0) } ?? "",
-            tool?.approvalKind ?? "",
-            tool?.approvalReason ?? "",
-            tool?.approvalCommand ?? "",
-            tool?.approvalCwd ?? "",
-            String(isStreaming),
-        ].joined(separator: "|")
+        let permissionRequestId = tool?.permissionRequestId.map { String(describing: $0) } ?? ""
+        let approvalRequestId = tool?.approvalRequestId.map { String(describing: $0) } ?? ""
+
+        var signatureParts: [String] = []
+        signatureParts.reserveCapacity(17)
+        signatureParts.append(segment.id.uuidString)
+        signatureParts.append(segment.kind.rawValue)
+        signatureParts.append(segment.text)
+        signatureParts.append(tool?.toolCallId ?? "")
+        signatureParts.append(tool?.title ?? "")
+        signatureParts.append(tool?.kind ?? "")
+        signatureParts.append(tool?.status ?? "")
+        signatureParts.append(tool?.output ?? "")
+        signatureParts.append(optionSignature)
+        signatureParts.append(tool?.acpPermissionRequestId?.description ?? "")
+        signatureParts.append(permissionRequestId)
+        signatureParts.append(approvalRequestId)
+        signatureParts.append(tool?.approvalKind ?? "")
+        signatureParts.append(tool?.approvalReason ?? "")
+        signatureParts.append(tool?.approvalCommand ?? "")
+        signatureParts.append(tool?.approvalCwd ?? "")
+        signatureParts.append(String(isStreaming))
+        return signatureParts.joined(separator: "|")
     }
 
     func withContentHashSalt(_ salt: Int) -> ChatEntry {
