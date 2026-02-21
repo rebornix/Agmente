@@ -146,6 +146,8 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
 
     private var sessionSummaryCache: [SessionSummary] = []
     private var sessionMessageKeys: [String: [UUID: String]] = [:]
+    private var turnStreamingMessageIds: [String: UUID] = [:]
+    private var lastStreamingEventAtByThreadId: [String: Date] = [:]
 
     private var activeThreadId: String?
     private var activeTurnId: String?
@@ -155,6 +157,8 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
     private var openSessionRequestToken: UInt64 = 0
     private var needsInitializedAck: Bool = false
     private var reasoningCache: [String: String] = [:]
+    private static let streamingRecencyWindow: TimeInterval = 15
+    private static let troubleshootingLoggingEnabled = false
     private static let proposedPlanRegex = try? NSRegularExpression(
         pattern: "<proposed_plan>([\\s\\S]*?)</proposed_plan>",
         options: [.caseInsensitive]
@@ -266,6 +270,8 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
         sessionViewModels.removeValue(forKey: sessionId)
         sessionViewModelCancellables.removeValue(forKey: sessionId)?.cancel()
         sessionMessageKeys.removeValue(forKey: sessionId)
+        turnStreamingMessageIds.removeAll()
+        lastStreamingEventAtByThreadId.removeValue(forKey: sessionId)
     }
 
     func removeAllSessionViewModels() {
@@ -277,6 +283,8 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
         }
         sessionViewModelCancellables.removeAll()
         sessionMessageKeys.removeAll()
+        turnStreamingMessageIds.removeAll()
+        lastStreamingEventAtByThreadId.removeAll()
         Task { await sessionLogger?.endSession() }
     }
 
@@ -399,6 +407,8 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
         let isNew = sessionId != id
         if isNew {
             activeTurnId = nil
+            turnStreamingMessageIds.removeAll()
+            lastStreamingEventAtByThreadId.removeAll()
         }
         sessionId = id
         selectedSessionId = id
@@ -454,10 +464,11 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
             }
 
             cancelPostResumeRefreshTask()
+            logOpen("Begin openSession thread=\(id)")
             trace("openSession begin thread=\(id) selectedSession=\(selectedSessionId ?? "nil") activeThread=\(activeThreadId ?? "nil") activeTurn=\(activeTurnId ?? "nil") state=\(String(describing: connectionState))")
             guard let service = getServiceClosure() else {
                 trace("openSession fallback: service=nil")
-                appendClosure("Not connected - falling back to local cache")
+                logOpen("Not connected; falling back to local cache")
                 if isCurrentOpenSessionRequest(requestToken, for: id) {
                     pendingSessionLoad = nil
                 }
@@ -465,7 +476,7 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
             }
             guard connectionState == .connected else {
                 trace("openSession fallback: state=\(String(describing: connectionState))")
-                appendClosure("Not connected - falling back to local cache")
+                logOpen("Not connected; falling back to local cache")
                 if isCurrentOpenSessionRequest(requestToken, for: id) {
                     pendingSessionLoad = nil
                 }
@@ -480,10 +491,20 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
                 }
 
                 let existingMessages = sessionViewModels[id]?.chatMessages ?? []
-                let hadStreamingBeforeResume = (id == sessionId && activeTurnId != nil)
-                    || existingMessages.contains(where: { $0.isStreaming })
+                let hasStreamingMessageBeforeResume = existingMessages.contains(where: { $0.isStreaming })
+                let activeTurnBeforeResume = (id == sessionId) ? activeTurnId : nil
+                let hadStreamingBeforeResume = activeTurnBeforeResume != nil
+                    || hasStreamingMessageBeforeResume
+                let likelyInFlightStreaming = isLikelyInFlightStreamingState(
+                    threadId: id,
+                    activeTurnId: activeTurnBeforeResume,
+                    hasStreamingMessage: hasStreamingMessageBeforeResume
+                )
                 trace(
-                    "openSession pre-resume thread=\(id) existingMessages=\(existingMessages.count) existingToolCalls=\(countToolCallSegments(in: existingMessages)) hadStreaming=\(hadStreamingBeforeResume)"
+                    "openSession pre-resume thread=\(id) existingMessages=\(existingMessages.count) existingToolCalls=\(countToolCallSegments(in: existingMessages)) hadStreaming=\(hadStreamingBeforeResume) likelyInFlight=\(likelyInFlightStreaming)"
+                )
+                logOpen(
+                    "Pre-resume thread=\(id) existingMessages=\(existingMessages.count) hadStreaming=\(hadStreamingBeforeResume) likelyInFlight=\(likelyInFlightStreaming)"
                 )
 
                 var usedResumeBasedHydration = true
@@ -495,14 +516,14 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
                         result = attached
                         usedResumeBasedHydration = false
                         hydrationSource = "listener+thread/read"
-                        appendClosure("Attached to loaded Codex thread without resume: \(id)")
+                        logOpen("Attached to loaded thread without resume: \(id)")
                     } else {
-                        appendClosure("Resuming Codex thread: \(id)")
+                        logOpen("Resuming thread: \(id)")
                         result = try await resumeThread(threadId: id)
                     }
                 } catch {
                     trace("openSession listener-read failed thread=\(id) error=\(error.localizedDescription)")
-                    appendClosure("Attach/read unavailable; falling back to thread/resume for \(id)")
+                    logOpen("Attach/read unavailable; falling back to thread/resume for \(id)")
                     result = try await resumeThread(threadId: id)
                     usedResumeBasedHydration = true
                     hydrationSource = "thread/resume-fallback"
@@ -518,47 +539,68 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
                 trace(
                     "openSession hydrate result source=\(hydrationSource) thread=\(result.id) turns=\(result.turns.count) items=\(resumedItems) activeTurnId=\(result.activeTurnId ?? "nil")"
                 )
-
-                let shouldPreserve = shouldPreserveLocalChatState(
-                    existingMessages: existingMessages,
-                    resumeResult: result
+                logOpen(
+                    "Hydrate source=\(hydrationSource) thread=\(result.id) turns=\(result.turns.count) items=\(resumedItems) activeTurn=\(result.activeTurnId ?? "nil")"
                 )
-                trace("openSession preserveLocal=\(shouldPreserve)")
 
-                if shouldPreserve {
-                    if resumedItems == 0 {
-                        currentSessionViewModel?.setSessionContext(serverId: self.id, sessionId: id)
-                        if usedResumeBasedHydration || !hadStreamingBeforeResume {
-                            applyStreamingStateFromResume(result)
+                let staleResumeMissingActiveTurn: Bool
+                let missingActiveTurnFromServer = likelyInFlightStreaming && result.activeTurnId == nil
+                if let activeTurnBeforeResume, likelyInFlightStreaming {
+                    staleResumeMissingActiveTurn =
+                        missingActiveTurnFromServer
+                        || !resumeContainsTurn(result, turnId: activeTurnBeforeResume)
+                } else {
+                    staleResumeMissingActiveTurn = missingActiveTurnFromServer
+                }
+                if staleResumeMissingActiveTurn {
+                    trace(
+                        "openSession skip merge reason=staleResumeMissingActiveTurn thread=\(id) localActiveTurn=\(activeTurnBeforeResume ?? "nil") resumedActiveTurn=\(result.activeTurnId ?? "nil") likelyInFlight=\(likelyInFlightStreaming) missingActiveTurnFromServer=\(missingActiveTurnFromServer)"
+                    )
+                    currentSessionViewModel?.setSessionContext(serverId: self.id, sessionId: id)
+                    currentSessionViewModel?.saveChatState()
+                    logOpen("Preserved in-flight local state; skipped stale resume merge for thread \(id)")
+                } else {
+                    let shouldPreserve = shouldPreserveLocalChatState(
+                        existingMessages: existingMessages,
+                        resumeResult: result
+                    )
+                    trace("openSession preserveLocal=\(shouldPreserve)")
+
+                    if shouldPreserve {
+                        if resumedItems == 0 {
+                            currentSessionViewModel?.setSessionContext(serverId: self.id, sessionId: id)
+                            if !hadStreamingBeforeResume {
+                                applyStreamingStateFromResume(result)
+                            } else {
+                                trace("openSession preserve streaming source=\(hydrationSource) thread=\(id)")
+                            }
+                            currentSessionViewModel?.saveChatState()
+                            logOpen("Preserved local chat state for thread \(id)")
                         } else {
-                            trace("openSession preserve streaming source=\(hydrationSource) thread=\(id)")
+                            // Keep rich local tool-call rows while still ingesting newly resumed items.
+                            let merge = mergeChatFromThreadHistory(result, preferLocalRichness: true)
+                            if !hadStreamingBeforeResume {
+                                applyStreamingStateFromResume(result)
+                            } else {
+                                trace("openSession preserve streaming source=\(hydrationSource) thread=\(id)")
+                            }
+                            trace(
+                                "openSession merged-preserve-local turns=\(merge.resumedTurns) items=\(merge.resumedItems) reused=\(merge.reusedMessages) inserted=\(merge.insertedMessages) updated=\(merge.updatedMessages) unchanged=\(merge.unchangedMessages)"
+                            )
+                            logOpen("Merged resumed thread with preserved local richness for thread \(id)")
                         }
-                        currentSessionViewModel?.saveChatState()
-                        appendClosure("Preserved local chat state for thread \(id)")
                     } else {
-                        // Keep rich local tool-call rows while still ingesting newly resumed items.
-                        let merge = mergeChatFromThreadHistory(result, preferLocalRichness: true)
-                        if usedResumeBasedHydration || !hadStreamingBeforeResume {
+                        // Populate chat messages from the server response
+                        let merge = mergeChatFromThreadHistory(result)
+                        if !hadStreamingBeforeResume {
                             applyStreamingStateFromResume(result)
                         } else {
                             trace("openSession preserve streaming source=\(hydrationSource) thread=\(id)")
                         }
                         trace(
-                            "openSession merged-preserve-local turns=\(merge.resumedTurns) items=\(merge.resumedItems) reused=\(merge.reusedMessages) inserted=\(merge.insertedMessages) updated=\(merge.updatedMessages) unchanged=\(merge.unchangedMessages)"
+                            "openSession merged turns=\(merge.resumedTurns) items=\(merge.resumedItems) reused=\(merge.reusedMessages) inserted=\(merge.insertedMessages) updated=\(merge.updatedMessages) unchanged=\(merge.unchangedMessages)"
                         )
-                        appendClosure("Merged resumed thread with preserved local richness for thread \(id)")
                     }
-                } else {
-                    // Populate chat messages from the server response
-                    let merge = mergeChatFromThreadHistory(result)
-                    if usedResumeBasedHydration || !hadStreamingBeforeResume {
-                        applyStreamingStateFromResume(result)
-                    } else {
-                        trace("openSession preserve streaming source=\(hydrationSource) thread=\(id)")
-                    }
-                    trace(
-                        "openSession merged turns=\(merge.resumedTurns) items=\(merge.resumedItems) reused=\(merge.reusedMessages) inserted=\(merge.insertedMessages) updated=\(merge.updatedMessages) unchanged=\(merge.unchangedMessages)"
-                    )
                 }
 
                 if usedResumeBasedHydration {
@@ -600,7 +642,8 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
                     }
                 }
                 trace("openSession end thread=\(id) chatMessages=\(currentSessionViewModel?.chatMessages.count ?? -1)")
-                appendClosure("Loaded \(result.turns.count) turn(s) from Codex thread via \(hydrationSource)")
+                logOpen("Loaded \(result.turns.count) turn(s) via \(hydrationSource)")
+                logSessionSnapshot("open/end thread=\(id)")
             } catch is CancellationError {
                 trace("openSession canceled thread=\(id)")
             } catch {
@@ -609,7 +652,7 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
                     return
                 }
                 trace("openSession resume failed thread=\(id) error=\(error.localizedDescription)")
-                appendClosure("Failed to resume thread: \(error.localizedDescription) - falling back to local cache")
+                logOpen("Failed to resume thread: \(error.localizedDescription); falling back to local cache")
                 // Fall back to local storage if thread/resume fails
                 setActiveSession(id, cwd: nil, modes: nil)
             }
@@ -629,14 +672,24 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
             guard let self else { return }
             cancelPostResumeRefreshTask()
             let existingMessages = sessionViewModels[activeId]?.chatMessages ?? []
-            let hadStreamingBeforeResume = activeTurnId != nil || existingMessages.contains(where: { $0.isStreaming })
+            let hasStreamingMessageBeforeResume = existingMessages.contains(where: { $0.isStreaming })
+            let activeTurnBeforeResume = activeTurnId
+            let hadStreamingBeforeResume = activeTurnBeforeResume != nil || hasStreamingMessageBeforeResume
+            let likelyInFlightStreaming = isLikelyInFlightStreamingState(
+                threadId: activeId,
+                activeTurnId: activeTurnBeforeResume,
+                hasStreamingMessage: hasStreamingMessageBeforeResume
+            )
             let pendingCwd = sessionSummaries.first(where: { $0.id == activeId })?.cwd
             trace(
-                "resubscribe begin thread=\(activeId) existingMessages=\(existingMessages.count) existingToolCalls=\(countToolCallSegments(in: existingMessages)) hadStreaming=\(hadStreamingBeforeResume)"
+                "resubscribe begin thread=\(activeId) existingMessages=\(existingMessages.count) existingToolCalls=\(countToolCallSegments(in: existingMessages)) hadStreaming=\(hadStreamingBeforeResume) likelyInFlight=\(likelyInFlightStreaming)"
+            )
+            logOpen(
+                "Resubscribe begin thread=\(activeId) existingMessages=\(existingMessages.count) hadStreaming=\(hadStreamingBeforeResume) likelyInFlight=\(likelyInFlightStreaming)"
             )
 
             do {
-                appendClosure("Re-subscribing Codex thread after reconnect: \(activeId)")
+                logOpen("Re-subscribing thread after reconnect: \(activeId)")
 
                 var usedResumeBasedHydration = true
                 var hydrationSource = "thread/resume"
@@ -647,13 +700,13 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
                         result = attached
                         usedResumeBasedHydration = false
                         hydrationSource = "listener+thread/read"
-                        appendClosure("Reattached to loaded in-memory thread without resume")
+                        logOpen("Reattached to loaded in-memory thread without resume")
                     } else {
                         result = try await resumeThread(threadId: activeId)
                     }
                 } catch {
                     trace("resubscribe listener-read failed thread=\(activeId) error=\(error.localizedDescription)")
-                    appendClosure("Attach/read unavailable; falling back to thread/resume for \(activeId)")
+                    logOpen("Attach/read unavailable; falling back to thread/resume for \(activeId)")
                     result = try await resumeThread(threadId: activeId)
                     usedResumeBasedHydration = true
                     hydrationSource = "thread/resume-fallback"
@@ -664,66 +717,87 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
                 trace(
                     "resubscribe hydrate result source=\(hydrationSource) thread=\(result.id) turns=\(result.turns.count) items=\(resumedItems) activeTurnId=\(result.activeTurnId ?? "nil")"
                 )
+                logOpen(
+                    "Resubscribe hydrate source=\(hydrationSource) thread=\(result.id) turns=\(result.turns.count) items=\(resumedItems) activeTurn=\(result.activeTurnId ?? "nil")"
+                )
 
                 sessionId = activeId
                 selectedSessionId = activeId
 
-                let shouldPreserveLocal = shouldPreserveLocalChatState(
-                    existingMessages: existingMessages,
-                    resumeResult: result
-                )
-                trace("resubscribe preserveLocal=\(shouldPreserveLocal)")
+                let staleResumeMissingActiveTurn: Bool
+                let missingActiveTurnFromServer = likelyInFlightStreaming && result.activeTurnId == nil
+                if let activeTurnBeforeResume, likelyInFlightStreaming {
+                    staleResumeMissingActiveTurn =
+                        missingActiveTurnFromServer
+                        || !resumeContainsTurn(result, turnId: activeTurnBeforeResume)
+                } else {
+                    staleResumeMissingActiveTurn = missingActiveTurnFromServer
+                }
+                if staleResumeMissingActiveTurn {
+                    trace(
+                        "resubscribe skip merge reason=staleResumeMissingActiveTurn thread=\(activeId) localActiveTurn=\(activeTurnBeforeResume ?? "nil") resumedActiveTurn=\(result.activeTurnId ?? "nil") likelyInFlight=\(likelyInFlightStreaming) missingActiveTurnFromServer=\(missingActiveTurnFromServer)"
+                    )
+                    currentSessionViewModel?.setSessionContext(serverId: self.id, sessionId: activeId)
+                    currentSessionViewModel?.saveChatState()
+                    logOpen("Re-subscribed and preserved in-flight local state; skipped stale resume merge")
+                } else {
+                    let shouldPreserveLocal = shouldPreserveLocalChatState(
+                        existingMessages: existingMessages,
+                        resumeResult: result
+                    )
+                    trace("resubscribe preserveLocal=\(shouldPreserveLocal)")
 
-                if shouldPreserveLocal {
-                    if resumedItems == 0 {
-                        currentSessionViewModel?.setSessionContext(serverId: self.id, sessionId: activeId)
-                        if usedResumeBasedHydration || !hadStreamingBeforeResume {
-                            applyStreamingStateFromResume(result)
+                    if shouldPreserveLocal {
+                        if resumedItems == 0 {
+                            currentSessionViewModel?.setSessionContext(serverId: self.id, sessionId: activeId)
+                            if !hadStreamingBeforeResume {
+                                applyStreamingStateFromResume(result)
+                            } else {
+                                trace("resubscribe preserve streaming source=\(hydrationSource) thread=\(activeId)")
+                            }
+                            currentSessionViewModel?.saveChatState()
                         } else {
-                            trace("resubscribe preserve streaming source=\(hydrationSource) thread=\(activeId)")
+                            // Keep rich local tool-call rows while still ingesting newly resumed items.
+                            let merge = mergeChatFromThreadHistory(result, preferLocalRichness: true)
+                            if !hadStreamingBeforeResume {
+                                applyStreamingStateFromResume(result)
+                            } else {
+                                trace("resubscribe preserve streaming source=\(hydrationSource) thread=\(activeId)")
+                            }
+                            trace(
+                                "resubscribe merged-preserve-local turns=\(merge.resumedTurns) items=\(merge.resumedItems) reused=\(merge.reusedMessages) inserted=\(merge.insertedMessages) updated=\(merge.updatedMessages) unchanged=\(merge.unchangedMessages)"
+                            )
+                            logOpen("Re-subscribed thread and merged resumed updates with local richness")
                         }
-                        currentSessionViewModel?.saveChatState()
+                        if let cwd = result.cwd {
+                            rememberSession(activeId, cwd: cwd)
+                        } else {
+                            rememberSession(activeId, cwd: nil)
+                        }
+                        let resolvedCwd = result.cwd ?? pendingCwd
+                        fetchSkills(sessionId: activeId, cwdOverride: resolvedCwd)
+                        if resumedItems == 0 {
+                            logOpen("Re-subscribed thread and preserved local chat state")
+                        }
                     } else {
-                        // Keep rich local tool-call rows while still ingesting newly resumed items.
-                        let merge = mergeChatFromThreadHistory(result, preferLocalRichness: true)
-                        if usedResumeBasedHydration || !hadStreamingBeforeResume {
+                        let merge = mergeChatFromThreadHistory(result)
+                        if !hadStreamingBeforeResume {
                             applyStreamingStateFromResume(result)
                         } else {
                             trace("resubscribe preserve streaming source=\(hydrationSource) thread=\(activeId)")
                         }
                         trace(
-                            "resubscribe merged-preserve-local turns=\(merge.resumedTurns) items=\(merge.resumedItems) reused=\(merge.reusedMessages) inserted=\(merge.insertedMessages) updated=\(merge.updatedMessages) unchanged=\(merge.unchangedMessages)"
+                            "resubscribe merged turns=\(merge.resumedTurns) items=\(merge.resumedItems) reused=\(merge.reusedMessages) inserted=\(merge.insertedMessages) updated=\(merge.updatedMessages) unchanged=\(merge.unchangedMessages)"
                         )
-                        appendClosure("Re-subscribed active thread and merged resumed updates with local richness")
+                        if let cwd = result.cwd {
+                            rememberSession(activeId, cwd: cwd)
+                        } else {
+                            rememberSession(activeId, cwd: nil)
+                        }
+                        let resolvedCwd = result.cwd ?? pendingCwd
+                        fetchSkills(sessionId: activeId, cwdOverride: resolvedCwd)
+                        logOpen("Re-subscribed thread and refreshed chat history")
                     }
-                    if let cwd = result.cwd {
-                        rememberSession(activeId, cwd: cwd)
-                    } else {
-                        rememberSession(activeId, cwd: nil)
-                    }
-                    let resolvedCwd = result.cwd ?? pendingCwd
-                    fetchSkills(sessionId: activeId, cwdOverride: resolvedCwd)
-                    if resumedItems == 0 {
-                        appendClosure("Re-subscribed active thread and preserved local chat state")
-                    }
-                } else {
-                    let merge = mergeChatFromThreadHistory(result)
-                    if usedResumeBasedHydration || !hadStreamingBeforeResume {
-                        applyStreamingStateFromResume(result)
-                    } else {
-                        trace("resubscribe preserve streaming source=\(hydrationSource) thread=\(activeId)")
-                    }
-                    trace(
-                        "resubscribe merged turns=\(merge.resumedTurns) items=\(merge.resumedItems) reused=\(merge.reusedMessages) inserted=\(merge.insertedMessages) updated=\(merge.updatedMessages) unchanged=\(merge.unchangedMessages)"
-                    )
-                    if let cwd = result.cwd {
-                        rememberSession(activeId, cwd: cwd)
-                    } else {
-                        rememberSession(activeId, cwd: nil)
-                    }
-                    let resolvedCwd = result.cwd ?? pendingCwd
-                    fetchSkills(sessionId: activeId, cwdOverride: resolvedCwd)
-                    appendClosure("Re-subscribed active thread and refreshed chat history")
                 }
 
                 if usedResumeBasedHydration {
@@ -740,9 +814,10 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
 
                 pendingSessionLoad = nil
                 trace("resubscribe end thread=\(activeId) chatMessages=\(currentSessionViewModel?.chatMessages.count ?? -1)")
+                logSessionSnapshot("resubscribe/end thread=\(activeId)")
             } catch {
                 trace("resubscribe failed thread=\(activeId) error=\(error.localizedDescription)")
-                appendClosure("Failed to re-subscribe active thread: \(error.localizedDescription)")
+                logOpen("Failed to re-subscribe thread: \(error.localizedDescription)")
             }
         }
     }
@@ -919,6 +994,49 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
         return candidateToolCallIDs.isSubset(of: existingToolCallIDs)
     }
 
+    private static func isAssistantResumeNodeRepresentedByLocalToolRichMessage(
+        candidate: ChatMessage,
+        in existingMessages: [ChatMessage]
+    ) -> Bool {
+        guard candidate.role == .assistant else { return false }
+        guard hasRenderableMessagePayload(candidate) else { return false }
+        let candidateHasToolCalls = candidate.segments.contains { $0.kind == .toolCall }
+        guard !candidateHasToolCalls else { return false }
+
+        return existingMessages.contains { existing in
+            guard existing.role == .assistant else { return false }
+            guard existing.segments.contains(where: { $0.kind == .toolCall }) else { return false }
+            return isAssistantCandidateRepresentedLocally(candidate: candidate, existing: existing)
+        }
+    }
+
+    private static func representedMessageIndex(
+        candidate: ChatMessage,
+        in messages: [ChatMessage]
+    ) -> Int? {
+        messages.firstIndex { existing in
+            guard existing.role == candidate.role else { return false }
+            if existing.content == candidate.content
+                && existing.segments == candidate.segments
+                && existing.images == candidate.images
+                && existing.isError == candidate.isError
+            {
+                return true
+            }
+
+            switch candidate.role {
+            case .assistant:
+                return isAssistantCandidateRepresentedLocally(candidate: candidate, existing: existing)
+            case .user:
+                let existingText = ChatMessage.sanitizedUserContent(existing.content).trimmingCharacters(in: .whitespacesAndNewlines)
+                let candidateText = ChatMessage.sanitizedUserContent(candidate.content).trimmingCharacters(in: .whitespacesAndNewlines)
+                return !existingText.isEmpty && existingText == candidateText
+            case .system:
+                return false
+            }
+        }
+    }
+
     private static func normalizedAssistantText(_ text: String) -> String {
         text
             .components(separatedBy: .whitespacesAndNewlines)
@@ -1056,6 +1174,16 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
                     )
                 )
             } else {
+                let unmatchedExistingMessages = existingMessages.filter { !reusedExistingIds.contains($0.id) }
+                if shouldCarryForwardUnmatchedExisting,
+                   Self.isAssistantResumeNodeRepresentedByLocalToolRichMessage(
+                       candidate: node.message,
+                       in: unmatchedExistingMessages
+                   )
+                {
+                    trace("merge skip represented assistant key=\(node.key)")
+                    continue
+                }
                 insertedMessages += 1
                 resolvedNodes.append(
                     ResolvedResumeNode(
@@ -1072,37 +1200,52 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
         var mergedMessages: [ChatMessage] = resolvedNodes.map(\.message)
 
         if shouldCarryForwardUnmatchedExisting {
-            // Preserve all existing rows in their current order (keeping richer local tool-call rows),
-            // then append resume-only rows to the bottom in resume order.
-            var baseMessages: [ChatMessage] = []
-            baseMessages.reserveCapacity(existingMessages.count + insertedMessages)
-            var appendedResumeRows = 0
+            // Keep resume ordering as the backbone, then re-insert unmatched local rows near their
+            // neighboring reused rows from the previous transcript. This preserves local richness
+            // without pushing stale thought/tool rows to the tail out of turn order.
+            let reusedIdSet = reusedExistingIds
 
-            for existing in existingMessages {
-                if reusedExistingIds.contains(existing.id), let merged = mergedReusedMessagesById[existing.id] {
-                    baseMessages.append(merged)
-                    mergedKeysById[merged.id] = mergedKeysById[merged.id] ?? (existingKeysById[merged.id] ?? "local:\(merged.id.uuidString)")
-                } else {
-                    baseMessages.append(existing)
-                    mergedKeysById[existing.id] = existingKeysById[existing.id] ?? "local:\(existing.id.uuidString)"
-                    reusedMessages += 1
-                    unchangedMessages += 1
+            func representedIndex(for candidate: ChatMessage) -> Int? {
+                if let exactIndex = mergedMessages.firstIndex(where: { $0.id == candidate.id }) {
+                    return exactIndex
                 }
+                return Self.representedMessageIndex(candidate: candidate, in: mergedMessages)
             }
 
-            for resolved in resolvedNodes where resolved.reusedExistingId == nil {
+            func insertionIndexAroundExistingIndex(_ index: Int) -> Int {
+                var cursor = index - 1
+                while cursor >= 0 {
+                    if let represented = representedIndex(for: existingMessages[cursor]) {
+                        return represented + 1
+                    }
+                    cursor -= 1
+                }
+
+                cursor = index + 1
+                while cursor < existingMessages.count {
+                    if let represented = representedIndex(for: existingMessages[cursor]) {
+                        return represented
+                    }
+                    cursor += 1
+                }
+                return mergedMessages.count
+            }
+
+            for (existingIndex, existing) in existingMessages.enumerated() {
+                guard !reusedIdSet.contains(existing.id) else { continue }
+
                 let alreadyPresent = Self.isResumeMessageRepresentedLocally(
-                    candidate: resolved.message,
-                    in: baseMessages
+                    candidate: existing,
+                    in: mergedMessages
                 )
                 guard !alreadyPresent else { continue }
-                baseMessages.append(resolved.message)
-                appendedResumeRows += 1
-                mergedKeysById[resolved.message.id] = resolved.key
-            }
-            insertedMessages = appendedResumeRows
 
-            mergedMessages = baseMessages
+                let insertionIndex = insertionIndexAroundExistingIndex(existingIndex)
+                mergedMessages.insert(existing, at: max(0, min(insertionIndex, mergedMessages.count)))
+                mergedKeysById[existing.id] = existingKeysById[existing.id] ?? "local:\(existing.id.uuidString)"
+                reusedMessages += 1
+                unchangedMessages += 1
+            }
         }
 
         viewModel.setChatMessages(mergedMessages)
@@ -1128,6 +1271,22 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
         )
     }
 
+    private static func isUserResumeItem(_ item: CodexThreadResumeResult.Item) -> Bool {
+        if case .userMessage = item {
+            return true
+        }
+        return false
+    }
+
+    private func orderedResumeTurnItemsForTranscript(
+        _ items: [CodexThreadResumeResult.Item]
+    ) -> [(originalIndex: Int, item: CodexThreadResumeResult.Item)] {
+        let enumerated = items.enumerated().map { (originalIndex: $0.offset, item: $0.element) }
+        let userItems = enumerated.filter { Self.isUserResumeItem($0.item) }
+        let nonUserItems = enumerated.filter { !Self.isUserResumeItem($0.item) }
+        return userItems + nonUserItems
+    }
+
     private func buildResumeMessageNodes(
         result: CodexThreadResumeResult,
         stats: inout ResumeHistoryStats
@@ -1135,7 +1294,9 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
         var nodes: [ResumeMessageNode] = []
 
         for turn in result.turns {
-            for (itemIndex, item) in turn.items.enumerated() {
+            for entry in orderedResumeTurnItemsForTranscript(turn.items) {
+                let itemIndex = entry.originalIndex
+                let item = entry.item
                 stats.totalItems += 1
 
                 switch item {
@@ -1355,7 +1516,7 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
     func sendLoadSession(_ sessionIdToLoad: String, cwd: String?) {
         // Codex uses thread/resume instead of session/load
         // Redirect to openSession which handles this properly
-        appendClosure("Codex app-server: using thread/resume to load session")
+        logOpen("Using thread/resume to load session \(sessionIdToLoad)")
         openSession(sessionIdToLoad)
     }
 
@@ -1383,7 +1544,10 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
                 // Fetch skills for the new session's working directory
                 fetchSkills()
 
-                let threadId = try await startThread(cwd: configuredCwd)
+                let threadId = try await startThread(
+                    cwd: configuredCwd,
+                    approvalPolicy: permissionPreset.turnApprovalPolicy
+                )
                 setActiveSession(threadId, cwd: configuredCwd, modes: nil)
                 connectionManager.markSessionMaterialized(threadId)
                 rememberUsedWorkingDirectory(configuredCwd)
@@ -1408,6 +1572,8 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
             self.selectedSessionId = nil
             self.activeThreadId = nil
             self.activeTurnId = nil
+            self.turnStreamingMessageIds.removeAll()
+            self.lastStreamingEventAtByThreadId.removeAll()
             currentSessionViewModel?.resetChatState()
             Task { await sessionLogger?.endSession() }
         }
@@ -1549,7 +1715,7 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
                 return
             }
             guard let turnId = activeTurnId else {
-                currentSessionViewModel?.finishStreamingMessage()
+                currentSessionViewModel?.bindStreamingAssistantMessage(to: nil)
                 appendClosure("No active turn to interrupt")
                 return
             }
@@ -1557,7 +1723,9 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
             do {
                 try await interruptTurn(threadId: sessionId, turnId: turnId)
                 activeTurnId = nil
-                currentSessionViewModel?.finishStreamingMessage()
+                turnStreamingMessageIds.removeValue(forKey: turnId)
+                lastStreamingEventAtByThreadId.removeValue(forKey: sessionId)
+                currentSessionViewModel?.bindStreamingAssistantMessage(to: nil)
                 appendClosure("Interrupted active turn")
             } catch {
                 appendClosure("Failed to interrupt turn: \(error.localizedDescription)")
@@ -1583,9 +1751,9 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
                     agentInfo = info
                 }
                 persistSessionsToStorage()
-                appendClosure("Fetched \(sessionSummaries.count) Codex thread(s)")
+                logList("Fetched \(sessionSummaries.count) Codex thread(s)")
             } catch {
-                appendClosure("Failed to fetch Codex threads: \(error.localizedDescription)")
+                logList("Failed to fetch Codex threads: \(error.localizedDescription)")
                 loadCachedSessions()
             }
         }
@@ -1604,7 +1772,7 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
             if !storedSessions.isEmpty {
                 let summaries = storedSessions.map { $0.toSessionSummary() }
                 sessionSummaries = summaries
-                appendClosure("Loaded \(storedSessions.count) persisted thread(s) from storage")
+                logList("Loaded \(storedSessions.count) persisted thread(s) from storage")
             } else {
                 sessionSummaries = []
             }
@@ -1771,11 +1939,24 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
         openSessionRequestToken &+= 1
         let requestToken = openSessionRequestToken
 
+        let reopeningSameThread = (sessionId == id) || (selectedSessionId == id) || (activeThreadId == id)
+        let hadStreamingBeforeOpen = hasStreamingAssistantMessage(in: id)
+        let preserveInFlightTurnState = reopeningSameThread && (activeTurnId != nil || hadStreamingBeforeOpen)
+        let preservedActiveTurnId = activeTurnId
+
         pendingSessionLoad = id
         sessionId = id
         selectedSessionId = id
         activeThreadId = id
-        activeTurnId = nil
+        if preserveInFlightTurnState {
+            trace(
+                "openSession request preserve in-flight thread=\(id) activeTurn=\(preservedActiveTurnId ?? "nil") mappings=\(turnStreamingMessageIds.count)"
+            )
+        } else {
+            activeTurnId = nil
+            turnStreamingMessageIds.removeAll()
+            lastStreamingEventAtByThreadId.removeAll()
+        }
         reasoningCache.removeAll()
         currentSessionViewModel?.setSessionContext(serverId: self.id, sessionId: id)
         rememberSession(id, cwd: cwd)
@@ -1796,17 +1977,104 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
         guard let viewModel = currentSessionViewModel else { return }
         let hadStreamingMessage = viewModel.chatMessages.contains(where: { $0.isStreaming })
 
-        if result.activeTurnId != nil {
-            if !viewModel.chatMessages.contains(where: { $0.isStreaming }) {
-                _ = viewModel.ensureStreamingAssistantMessage()
-            }
+        if let activeTurnId = result.activeTurnId {
+            bindStreamingMessageForTurn(activeTurnId, ensureExists: true, reason: "resume")
         } else if viewModel.chatMessages.contains(where: { $0.isStreaming }) {
-            viewModel.finishStreamingMessage()
+            viewModel.bindStreamingAssistantMessage(to: nil)
         }
         let hasStreamingMessage = viewModel.chatMessages.contains(where: { $0.isStreaming })
         trace(
             "applyStreamingStateFromResume activeTurnId=\(result.activeTurnId ?? "nil") hadStreamingMessage=\(hadStreamingMessage) hasStreamingMessage=\(hasStreamingMessage)"
         )
+    }
+
+    private func resumeContainsTurn(_ result: CodexThreadResumeResult, turnId: String?) -> Bool {
+        guard let turnId, !turnId.isEmpty else { return false }
+        if result.activeTurnId == turnId {
+            return true
+        }
+        return result.turns.contains { $0.id == turnId }
+    }
+
+    private func markStreamingActivity(threadId: String?) {
+        let resolvedThreadId = firstNonEmptyOptionalString(
+            threadId,
+            activeThreadId,
+            sessionId.isEmpty ? nil : sessionId
+        )
+        guard let resolvedThreadId, !resolvedThreadId.isEmpty else { return }
+        lastStreamingEventAtByThreadId[resolvedThreadId] = Date()
+    }
+
+    private func isLikelyInFlightStreamingState(
+        threadId: String,
+        activeTurnId: String?,
+        hasStreamingMessage: Bool
+    ) -> Bool {
+        if let activeTurnId, !activeTurnId.isEmpty {
+            return true
+        }
+        guard hasStreamingMessage else { return false }
+        guard let lastStreamingEventAt = lastStreamingEventAtByThreadId[threadId] else { return false }
+        return Date().timeIntervalSince(lastStreamingEventAt) <= Self.streamingRecencyWindow
+    }
+
+    private func findAssistantMessageIdForTurn(
+        _ turnId: String,
+        sessionId: String,
+        in viewModel: ACPSessionViewModel
+    ) -> UUID? {
+        guard let keysByMessageId = sessionMessageKeys[sessionId] else { return nil }
+        let keyPrefix = "turn:\(turnId):"
+
+        var lastMatch: UUID?
+        for message in viewModel.chatMessages where message.role == .assistant {
+            guard let key = keysByMessageId[message.id], key.hasPrefix(keyPrefix) else { continue }
+            lastMatch = message.id
+        }
+        return lastMatch
+    }
+
+    private func bindStreamingMessageForTurn(
+        _ turnId: String,
+        ensureExists: Bool,
+        reason: String
+    ) {
+        guard let viewModel = currentSessionViewModel else { return }
+
+        if let existingBoundId = turnStreamingMessageIds[turnId],
+           viewModel.chatMessages.contains(where: { $0.role == .assistant && $0.id == existingBoundId }) {
+            viewModel.bindStreamingAssistantMessage(to: existingBoundId)
+            trace("stream bind reason=\(reason) turnId=\(turnId) source=memory id=\(existingBoundId)")
+            return
+        }
+
+        if let currentStreamingId = viewModel.currentStreamingAssistantMessageId(),
+           viewModel.chatMessages.contains(where: {
+               $0.role == .assistant && $0.id == currentStreamingId && $0.isStreaming
+           }) {
+            turnStreamingMessageIds[turnId] = currentStreamingId
+            viewModel.bindStreamingAssistantMessage(to: currentStreamingId)
+            trace("stream bind reason=\(reason) turnId=\(turnId) source=currentStreaming id=\(currentStreamingId)")
+            return
+        }
+
+        if let activeSessionId = selectedSessionId ?? (sessionId.isEmpty ? nil : sessionId),
+           let resumeBoundId = findAssistantMessageIdForTurn(turnId, sessionId: activeSessionId, in: viewModel) {
+            turnStreamingMessageIds[turnId] = resumeBoundId
+            viewModel.bindStreamingAssistantMessage(to: resumeBoundId)
+            trace("stream bind reason=\(reason) turnId=\(turnId) source=resumeKeys id=\(resumeBoundId)")
+            return
+        }
+
+        guard ensureExists else { return }
+
+        let index = viewModel.ensureStreamingAssistantMessage()
+        guard viewModel.chatMessages.indices.contains(index) else { return }
+        let ensuredId = viewModel.chatMessages[index].id
+        turnStreamingMessageIds[turnId] = ensuredId
+        viewModel.bindStreamingAssistantMessage(to: ensuredId)
+        trace("stream bind reason=\(reason) turnId=\(turnId) source=ensure id=\(ensuredId)")
     }
 
     private func countToolCallSegments(in messages: [ChatMessage]) -> Int {
@@ -2026,7 +2294,10 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
         return try await service.callJSONRPC(method: method, params: params)
     }
 
-    private func startThread(cwd: String?, approvalPolicy: String = "untrusted") async throws -> String {
+    private func startThread(
+        cwd: String?,
+        approvalPolicy: String = PermissionPreset.defaultPermissions.turnApprovalPolicy
+    ) async throws -> String {
         var params: [String: JSONValue] = [
             "approvalPolicy": .string(approvalPolicy),
             // Persist richer rollout history so cold app relaunch can restore tool-call rows.
@@ -2045,6 +2316,8 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
         }
         activeThreadId = id
         activeTurnId = nil
+        turnStreamingMessageIds.removeAll()
+        lastStreamingEventAtByThreadId.removeAll()
         return id
     }
 
@@ -2089,6 +2362,10 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
         let response = try await callCodex(method: "turn/start", params: .object(params))
         activeThreadId = threadId
         activeTurnId = response.result?.objectValue?["turn"]?.objectValue?["id"]?.stringValue
+        if let activeTurnId, !activeTurnId.isEmpty {
+            markStreamingActivity(threadId: threadId)
+            bindStreamingMessageForTurn(activeTurnId, ensureExists: true, reason: "turn/start")
+        }
     }
 
     func collaborationModePayload(isPlanMode: Bool, modelOverride: String?) -> JSONValue? {
@@ -2368,6 +2645,7 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
                     handleTurnDiffUpdated(diff: diff, turnId: turnId)
                 }
             case "item/agentMessage/delta":
+                markStreamingActivity(threadId: threadId)
                 alignActiveTurnIfNeeded(
                     incomingTurnId: params["turnId"]?.stringValue,
                     method: "item/agentMessage/delta",
@@ -2378,9 +2656,11 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
                     currentSessionViewModel?.appendAssistantText(delta, kind: .message)
                 }
             case "item/plan/delta":
+                markStreamingActivity(threadId: threadId)
                 handlePlanDeltaNotification(params, method: "item/plan/delta")
             case "item/started":
                 let turnId = params["turnId"]?.stringValue
+                markStreamingActivity(threadId: threadId)
                 alignActiveTurnIfNeeded(
                     incomingTurnId: turnId,
                     method: "item/started",
@@ -2388,10 +2668,12 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
                 )
                 if let itemValue = params["item"] {
                     trace("notif apply method=item/started")
+                    logStream("notif item/started turn=\(turnId ?? "nil") activeTurn=\(activeTurnId ?? "nil")")
                     handleCodexItemEvent(itemValue, status: "in_progress", turnId: turnId)
                 }
             case "item/completed":
                 let turnId = params["turnId"]?.stringValue
+                markStreamingActivity(threadId: threadId)
                 alignActiveTurnIfNeeded(
                     incomingTurnId: turnId,
                     method: "item/completed",
@@ -2399,9 +2681,11 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
                 )
                 if let itemValue = params["item"] {
                     trace("notif apply method=item/completed")
+                    logStream("notif item/completed turn=\(turnId ?? "nil") activeTurn=\(activeTurnId ?? "nil")")
                     handleCodexItemEvent(itemValue, status: "completed", turnId: turnId)
                 }
             case "turn/plan/updated":
+                markStreamingActivity(threadId: threadId)
                 handleTurnPlanUpdatedNotification(params)
             case "turn/completed":
                 let turnObject = params["turn"]?.objectValue
@@ -2420,8 +2704,16 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
                     }
                 }
                 activeTurnId = nil
-                currentSessionViewModel?.finishStreamingMessage()
+                if let completedTurnId, !completedTurnId.isEmpty {
+                    turnStreamingMessageIds.removeValue(forKey: completedTurnId)
+                }
+                if let threadId {
+                    lastStreamingEventAtByThreadId.removeValue(forKey: threadId)
+                }
+                currentSessionViewModel?.bindStreamingAssistantMessage(to: nil)
                 trace("notif apply method=turn/completed newActiveTurn=nil")
+                logStream("notif turn/completed turn=\(completedTurnId ?? "nil")")
+                logSessionSnapshot("turn/completed")
                 if let serverId = selectedSessionId {
                     eventDelegate?.sessionDidReceiveStopReason("turn_completed", serverId: id, sessionId: serverId)
                 }
@@ -2429,8 +2721,10 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
                 if let turnId = params["turn"]?.objectValue?["id"]?.stringValue {
                     cancelPostResumeRefreshTask()
                     activeTurnId = turnId
-                    _ = currentSessionViewModel?.ensureStreamingAssistantMessage()
+                    markStreamingActivity(threadId: threadId)
+                    bindStreamingMessageForTurn(turnId, ensureExists: true, reason: "turn/started")
                     trace("notif apply method=turn/started newActiveTurn=\(turnId)")
+                    logStream("notif turn/started turn=\(turnId)")
                     if isSessionLoggingEnabled() {
                         Task {
                             await sessionLogger?.logTurnEvent(
@@ -2478,7 +2772,9 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
         } else {
             // Terminal error — stop streaming and show the error
             activeTurnId = nil
-            currentSessionViewModel?.finishStreamingMessage()
+            turnStreamingMessageIds.removeAll()
+            lastStreamingEventAtByThreadId.removeAll()
+            currentSessionViewModel?.bindStreamingAssistantMessage(to: nil)
             currentSessionViewModel?.addSystemErrorMessage(errorMessage)
         }
     }
@@ -2610,6 +2906,9 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
         case .reasoning(let itemId, let text):
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { return }
+            logStream(
+                "item reasoning status=\(status) turn=\(turnId ?? "nil") item=\(itemId ?? "nil") chars=\(trimmed.count) preview=\"\(logPreview(trimmed, limit: 120))\""
+            )
             if let itemId, !itemId.isEmpty {
                 let previous = reasoningCache[itemId]
                 if previous != trimmed {
@@ -2637,6 +2936,9 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
                 status: status,
                 output: outputValue
             )
+            logStream(
+                "item commandExecution status=\(status) turn=\(turnId ?? "nil") item=\(itemId ?? "nil") title=\"\(logPreview(displayTitle, limit: 120))\" outputChars=\(outputValue?.count ?? 0)"
+            )
             if loggingEnabled {
                 Task {
                     await sessionLogger?.logCommandExecution(
@@ -2652,7 +2954,6 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
         case .fileChange(let itemId, let path, let changeType, let diff):
             let trimmedPath = path?.trimmingCharacters(in: .whitespacesAndNewlines)
             let typeLabel = changeType?.trimmingCharacters(in: .whitespacesAndNewlines)
-            appendClosure("Codex fileChange item id=\(itemId ?? "nil") path=\(trimmedPath ?? "nil") type=\(typeLabel ?? "nil") diffChars=\(diff?.count ?? 0)")
             let displayTitle: String
             if let typeLabel, !typeLabel.isEmpty, let trimmedPath, !trimmedPath.isEmpty {
                 displayTitle = "\(typeLabel): \(trimmedPath)"
@@ -2670,6 +2971,9 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
                 kind: "edit",
                 status: status,
                 output: outputValue
+            )
+            logStream(
+                "item fileChange status=\(status) turn=\(turnId ?? "nil") item=\(itemId ?? "nil") title=\"\(logPreview(displayTitle, limit: 120))\" diffChars=\(outputValue?.count ?? 0)"
             )
             if loggingEnabled {
                 Task {
@@ -2694,6 +2998,9 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
                 status: effectiveStatus,
                 output: output
             )
+            logStream(
+                "item toolCall status=\(effectiveStatus) turn=\(turnId ?? "nil") item=\(itemId ?? "nil") title=\"\(logPreview(effectiveTitle.isEmpty ? "Tool call" : effectiveTitle, limit: 120))\" kind=\(kind ?? "nil") outputChars=\(output?.count ?? 0)"
+            )
             if loggingEnabled {
                 Task {
                     await sessionLogger?.logToolCall(
@@ -2711,15 +3018,15 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
         case .plan(_, let text):
             applyPlanItem(text, status: status, to: viewModel)
 
-        case .agentMessage(_, let text):
-            applyAgentMessageItem(text, status: status, to: viewModel)
+        case .agentMessage(let itemId, let text):
+            applyAgentMessageItem(text, itemId: itemId, status: status, to: viewModel)
 
         case .userMessage, .unknown:
             break
         }
     }
 
-    private func applyAgentMessageItem(_ text: String, status: String, to viewModel: ACPSessionViewModel) {
+    private func applyAgentMessageItem(_ text: String, itemId: String?, status: String, to viewModel: ACPSessionViewModel) {
         if let planText = extractProposedPlanText(from: text) {
             applyPlanItem(planText, status: status, to: viewModel)
             return
@@ -2728,14 +3035,37 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         trace("item agentMessage status=\(status) chars=\(trimmed.count)")
+        logStream(
+            "item agentMessage status=\(status) chars=\(trimmed.count) preview=\"\(logPreview(trimmed, limit: 140))\""
+        )
 
         // When deltas already built a streaming message, item/completed often carries
-        // the full final text. Append only the missing suffix to avoid duplication.
-        if let last = viewModel.chatMessages.last, last.role == .assistant, last.isStreaming {
-            let existing = last.content.trimmingCharacters(in: .whitespacesAndNewlines)
-            if existing == trimmed || existing.hasSuffix(trimmed) {
+        // the full final text. Dedup against message text segments (excluding tool rows)
+        // so we don't append the same answer again after tool-call activity.
+        if let streamingId = viewModel.currentStreamingAssistantMessageId(),
+           let streamingMessage = viewModel.chatMessages.first(where: { $0.id == streamingId && $0.role == .assistant }) {
+            let existingMessageText = streamingMessage.segments
+                .filter { $0.kind == .message }
+                .map(\.text)
+                .joined()
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let fallbackExistingText = streamingMessage.content.trimmingCharacters(in: .whitespacesAndNewlines)
+            let existing = existingMessageText.isEmpty ? fallbackExistingText : existingMessageText
+            let normalizedExisting = Self.normalizedAssistantText(existing)
+            let normalizedIncoming = Self.normalizedAssistantText(trimmed)
+
+            if existing == trimmed
+                || existing.hasSuffix(trimmed)
+                || existing.contains(trimmed)
+                || (!normalizedIncoming.isEmpty
+                    && (normalizedExisting == normalizedIncoming || normalizedExisting.contains(normalizedIncoming)))
+            {
+                trace(
+                    "item agentMessage dedupe skip status=\(status) item=\(itemId ?? "nil") existingChars=\(existing.count) incomingChars=\(trimmed.count)"
+                )
                 return
             }
+
             if !existing.isEmpty, trimmed.hasPrefix(existing) {
                 let suffix = String(trimmed.dropFirst(existing.count))
                 if !suffix.isEmpty {
@@ -2748,6 +3078,9 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
         if status == "completed" || status == "in_progress" {
             viewModel.appendAssistantText(trimmed, kind: .message)
             trace("item agentMessage appended status=\(status)")
+            if status == "completed" {
+                logSessionSnapshot("item/agentMessage/completed")
+            }
         }
     }
 
@@ -2755,6 +3088,7 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         trace("item plan status=\(status) chars=\(trimmed.count)")
+        logStream("item plan status=\(status) chars=\(trimmed.count) preview=\"\(logPreview(trimmed, limit: 140))\"")
 
         if let last = viewModel.chatMessages.last,
            last.role == .assistant,
@@ -2778,6 +3112,7 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
         if status == "completed" {
             viewModel.completePlanItem(id: nil, text: trimmed)
             trace("item plan completed")
+            logSessionSnapshot("item/plan/completed")
         } else if status == "in_progress" {
             viewModel.appendAssistantText(trimmed, kind: .plan)
             trace("item plan appended status=\(status)")
@@ -2802,19 +3137,80 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
         ensureStreamingMessage: Bool
     ) {
         guard let incomingTurnId, !incomingTurnId.isEmpty else { return }
-        if activeTurnId == incomingTurnId { return }
+        if activeTurnId == incomingTurnId {
+            if ensureStreamingMessage {
+                markStreamingActivity(threadId: activeThreadId)
+                bindStreamingMessageForTurn(incomingTurnId, ensureExists: true, reason: "align/same/\(method)")
+            }
+            return
+        }
         let previous = activeTurnId ?? "nil"
         activeTurnId = incomingTurnId
+        markStreamingActivity(threadId: activeThreadId)
         if ensureStreamingMessage {
-            _ = currentSessionViewModel?.ensureStreamingAssistantMessage()
+            bindStreamingMessageForTurn(incomingTurnId, ensureExists: true, reason: "align/\(method)")
         }
         trace("notif alignTurn method=\(method) from=\(previous) to=\(incomingTurnId)")
     }
 
     private func trace(_ message: String) {
 #if DEBUG
+        guard Self.troubleshootingLoggingEnabled else { return }
         print("[CodexResumeDebug][\(id.uuidString.prefix(6))] \(message)")
 #endif
+    }
+
+    private func logOpen(_ message: @autoclosure () -> String) {
+        guard Self.troubleshootingLoggingEnabled else { return }
+        appendClosure("[open] \(message())")
+    }
+
+    private func logList(_ message: @autoclosure () -> String) {
+        guard Self.troubleshootingLoggingEnabled else { return }
+        appendClosure("[list] \(message())")
+    }
+
+    private func logStream(_ message: @autoclosure () -> String) {
+        guard Self.troubleshootingLoggingEnabled else { return }
+        appendClosure("[stream] \(message())")
+    }
+
+    private func logPreview(_ text: String, limit: Int) -> String {
+        let singleLine = text
+            .replacingOccurrences(of: "\r", with: "\\r")
+            .replacingOccurrences(of: "\n", with: "\\n")
+        if singleLine.count <= limit {
+            return singleLine
+        }
+        return String(singleLine.prefix(limit)) + "..."
+    }
+
+    private func logSessionSnapshot(_ label: String, tailCount: Int = 8) {
+        guard Self.troubleshootingLoggingEnabled else { return }
+        guard let messages = currentSessionViewModel?.chatMessages else {
+            logStream("\(label) snapshot unavailable")
+            return
+        }
+
+        let activeTurn = activeTurnId ?? "nil"
+        let boundStreamingId = activeTurnId.flatMap { turnStreamingMessageIds[$0]?.uuidString } ?? "nil"
+        logStream("\(label) snapshot total=\(messages.count) activeTurn=\(activeTurn) boundStream=\(boundStreamingId)")
+
+        let start = max(messages.count - max(1, tailCount), 0)
+        for index in start..<messages.count {
+            let message = messages[index]
+            let segmentKinds = message.segments.map(\.kind.rawValue).joined(separator: ",")
+            let toolCallCount = message.segments.reduce(into: 0) { count, segment in
+                if segment.kind == .toolCall {
+                    count += 1
+                }
+            }
+            let streamState = message.isStreaming ? "streaming" : "final"
+            let preview = logPreview(message.content, limit: 160)
+            logStream(
+                "\(label) row=\(index) role=\(message.role.rawValue) state=\(streamState) id=\(message.id.uuidString) segments=\(message.segments.count) toolCalls=\(toolCallCount) kinds=[\(segmentKinds)] text=\"\(preview)\""
+            )
+        }
     }
 
     /// Handle incoming approval request from Codex app-server.
@@ -3376,3 +3772,46 @@ extension CodexServerViewModel: ACPSessionEventDelegate {
         lastLoadedSession = sessionId
     }
 }
+
+#if DEBUG
+extension CodexServerViewModel {
+    struct MergeTestKeySeed {
+        let messageIndex: Int
+        let key: String
+    }
+
+    func seedMergeStateForTesting(
+        threadId: String,
+        messages: [ChatMessage],
+        keySeeds: [MergeTestKeySeed] = [],
+        activeTurnId: String? = nil
+    ) {
+        setActiveSession(threadId, cwd: nil, modes: nil)
+        currentSessionViewModel?.setSessionContext(serverId: id, sessionId: threadId)
+        currentSessionViewModel?.setChatMessages(messages)
+
+        var seededKeys: [UUID: String] = [:]
+        for seed in keySeeds where messages.indices.contains(seed.messageIndex) {
+            seededKeys[messages[seed.messageIndex].id] = seed.key
+        }
+        sessionMessageKeys[threadId] = seededKeys
+        self.activeThreadId = threadId
+        self.activeTurnId = activeTurnId
+    }
+
+    @discardableResult
+    func applyThreadReadMergeForTesting(
+        resultObject: [String: JSONValue],
+        preferLocalRichness: Bool = true
+    ) -> Bool {
+        guard let parsed = parseThreadResume(result: .object(resultObject)) else { return false }
+        _ = mergeChatFromThreadHistory(parsed, preferLocalRichness: preferLocalRichness)
+        applyStreamingStateFromResume(parsed)
+        return true
+    }
+
+    func mergedMessagesForTesting() -> [ChatMessage] {
+        currentSessionViewModel?.chatMessages ?? []
+    }
+}
+#endif

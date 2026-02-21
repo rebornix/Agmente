@@ -68,6 +68,7 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
     
     /// Cancellables for observing child view model changes.
     private var serverViewModelCancellables: [UUID: AnyCancellable] = [:]
+    private var codexPreferenceCancellables: [UUID: AnyCancellable] = [:]
 
     /// Returns the ServerViewModel for the selected server.
     /// Returns concrete ServerViewModel for ACP servers, nil for Codex (use selectedCodexServerViewModel).
@@ -225,6 +226,7 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
     private let devModeKey = "Agmente.devModeEnabled"
     private let codexSessionLoggingKey = "Agmente.codexSessionLoggingEnabled"
     private let highPerformanceRendererKey = "Agmente.useHighPerformanceChatRenderer"
+    private let codexPermissionPresetPrefix = "Agmente.codexPermissionPreset."
     private let serverLifecycleController: ServerLifecycleController
 
     private func debugLog(_ message: String) {
@@ -378,6 +380,7 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
         serverViewModels[serverId]?.removeAllSessionViewModels()
         serverViewModels.removeValue(forKey: serverId)
         serverViewModelCancellables.removeValue(forKey: serverId)
+        codexPreferenceCancellables.removeValue(forKey: serverId)
     }
     
     /// Sets up observation of a server view model to forward objectWillChange.
@@ -420,6 +423,8 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
             cacheDelegate: self,
             storage: storage
         )
+        restoreCodexPreferences(for: config.id, into: viewModel)
+        observeCodexPreferences(for: config.id, viewModel: viewModel)
         if codexAckNeeded.contains(config.id) {
             viewModel.markInitializedAckNeeded()
             codexAckNeeded.remove(config.id)
@@ -439,6 +444,7 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
         let oldViewModel = serverViewModels[serverId]
         oldViewModel?.removeAllSessionViewModels()
         serverViewModelCancellables.removeValue(forKey: serverId)
+        codexPreferenceCancellables.removeValue(forKey: serverId)
 
         // Create new CodexServerViewModel
         let codexViewModel = createCodexServerViewModel(for: config)
@@ -446,6 +452,27 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
         serverViewModels[serverId] = codexViewModel
         observeServerViewModel(codexViewModel)
         append("Switched to CodexServerViewModel for \(config.name)")
+    }
+
+    private func codexPermissionPresetKey(for serverId: UUID) -> String {
+        codexPermissionPresetPrefix + serverId.uuidString
+    }
+
+    private func restoreCodexPreferences(for serverId: UUID, into viewModel: CodexServerViewModel) {
+        let presetKey = codexPermissionPresetKey(for: serverId)
+        if let rawPreset = defaults.string(forKey: presetKey),
+           let preset = CodexServerViewModel.PermissionPreset(rawValue: rawPreset) {
+            viewModel.permissionPreset = preset
+        }
+    }
+
+    private func observeCodexPreferences(for serverId: UUID, viewModel: CodexServerViewModel) {
+        codexPreferenceCancellables[serverId] = viewModel.$permissionPreset
+            .removeDuplicates()
+            .sink { [weak self] preset in
+                guard let self else { return }
+                self.defaults.set(preset.rawValue, forKey: self.codexPermissionPresetKey(for: serverId))
+            }
     }
 
     // MARK: - Phase 1: Per-Session ViewModel Management
@@ -751,7 +778,8 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
             token: config.token,
             cfAccessClientId: config.cfAccessClientId,
             cfAccessClientSecret: config.cfAccessClientSecret,
-            workingDirectory: sanitizeWorkingDirectory(config.workingDirectory)
+            workingDirectory: sanitizeWorkingDirectory(config.workingDirectory),
+            serverType: config.serverType
         )
 
         let connectionChanged = servers[index].scheme != updated.scheme ||
@@ -900,6 +928,7 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
         if defaults.string(forKey: lastServerKey) == id.uuidString {
             defaults.removeObject(forKey: lastServerKey)
         }
+        defaults.removeObject(forKey: codexPermissionPresetKey(for: id))
         
         // Clear caches
         sessionCache.removeValue(forKey: id)

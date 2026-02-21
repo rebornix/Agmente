@@ -533,8 +533,12 @@ private struct SessionListPage: View {
         let agentCapabilities = model.serverAgentInfo?.capabilities
         let capabilityVerifications = model.serverAgentInfo?.verifications ?? []
         let lastConnectedLabel = model.lastConnectedAt.map { Self.lastConnectedFormatter.string(from: $0) } ?? "—"
-        // Only show ACP capabilities for ACP servers (not Codex app-server)
-        let isACPServer = model.selectedServer?.serverType == .acp
+        // Only show ACP capability warnings for true ACP servers.
+        // On app restore there can be brief model-switch windows; treat either explicit Codex config
+        // or an active Codex view model as Codex to avoid ACP-specific warnings.
+        let isCodexServer = model.selectedServer?.serverType == .codexAppServer
+            || model.selectedCodexServerViewModel != nil
+        let isACPServer = !isCodexServer
         // Only ACP servers have expandable content (capabilities); Codex app-server protocol doesn't provide modes/capabilities
         let hasExpandableContent = isACPServer
 

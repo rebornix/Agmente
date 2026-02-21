@@ -1,0 +1,130 @@
+{
+  "name": "thread_read_markdown_growth_then_updates_merges_without_prefix_duplicates",
+  "threadId": "fixture-thread-3",
+  "initialMessages": [
+    {
+      "role": "user",
+      "content": "try again, 6 times, 2s delay"
+    },
+    {
+      "role": "assistant",
+      "content": "Running the same skill again with 6 iterations and 2-second delays, using separate command calls per iteration."
+    }
+  ],
+  "initialKeys": [
+    { "index": 0, "key": "turn:t3:user:u3" },
+    { "index": 1, "key": "turn:t3:assistant:a3-run" }
+  ],
+  "steps": [
+    {
+      "kind": "thread_read",
+      "preferLocalRichness": true,
+      "result": {
+        "thread": {
+          "id": "fixture-thread-3",
+          "turns": [
+            {
+              "id": "t3",
+              "status": "completed",
+              "items": [
+                {
+                  "type": "user_message",
+                  "id": "u3",
+                  "text": "try again, 6 times, 2s delay"
+                },
+                {
+                  "type": "agent_message",
+                  "id": "a3-run",
+                  "text": "Running the same skill again with 6 iterations and 2-second delays, using separate command calls per iteration."
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "kind": "thread_read",
+      "preferLocalRichness": true,
+      "result": {
+        "thread": {
+          "id": "fixture-thread-3",
+          "turns": [
+            {
+              "id": "t3",
+              "status": "completed",
+              "items": [
+                {
+                  "type": "user_message",
+                  "id": "u3",
+                  "text": "try again, 6 times, 2s delay"
+                },
+                {
+                  "type": "agent_message",
+                  "id": "a3-run",
+                  "text": "Running the same skill again with 6 iterations and 2-second delays, using separate command calls per iteration."
+                },
+                {
+                  "type": "agent_message",
+                  "id": "a3-done",
+                  "text": "Completed: 6 runs with 2s delay between runs.\n\nOutputs:\n1. `1`\n2. `2`\n3. `3`\n4. `4`\n5. `5`\n6. `6`"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "kind": "update",
+      "method": "turn/started",
+      "params": {
+        "threadId": "fixture-thread-3",
+        "turn": { "id": "t3" }
+      }
+    },
+    {
+      "kind": "update",
+      "method": "item/agentMessage/delta",
+      "params": {
+        "threadId": "fixture-thread-3",
+        "turnId": "t3",
+        "delta": "\n\nIteration 1 completed; continuing with remaining runs."
+      }
+    }
+  ],
+  "expectations": {
+    "messageCount": 3,
+    "orderedMessages": [
+      {
+        "role": "user",
+        "contains": "try again, 6 times, 2s delay"
+      },
+      {
+        "role": "assistant",
+        "contains": "Running the same skill again with 6 iterations"
+      },
+      {
+        "role": "assistant",
+        "contains": "Completed: 6 runs with 2s delay between runs."
+      }
+    ],
+    "containsCounts": [
+      {
+        "role": "assistant",
+        "contains": "Running the same skill again with 6 iterations and 2-second delays, using separate command calls per iteration.",
+        "count": 1
+      },
+      {
+        "role": "assistant",
+        "contains": "Completed: 6 runs with 2s delay between runs.",
+        "count": 1
+      },
+      {
+        "role": "assistant",
+        "contains": "Iteration 1 completed; continuing with remaining runs.",
+        "count": 1
+      }
+    ]
+  }
+}

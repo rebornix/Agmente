@@ -1,0 +1,121 @@
+{
+  "name": "thread_read_then_updates_keeps_user_before_local_rich_assistant",
+  "threadId": "fixture-thread-2",
+  "initialMessages": [
+    {
+      "role": "user",
+      "content": "try again, 6 times, 2s delay"
+    },
+    {
+      "role": "assistant",
+      "content": "Running the same skill again with 6 iterations and 2-second delays, using separate command calls per iteration.\nTool call: [execute] /bin/zsh -lc \"LOOP_COUNTER=1 bash -lc 'echo \\\"$LOOP_COUNTER\\\"'\"\nTool call: [execute] /bin/zsh -lc 'sleep 2'",
+      "segments": [
+        {
+          "kind": "message",
+          "text": "Running the same skill again with 6 iterations and 2-second delays, using separate command calls per iteration."
+        },
+        {
+          "kind": "toolCall",
+          "text": "/bin/zsh -lc \"LOOP_COUNTER=1 bash -lc 'echo \\\"$LOOP_COUNTER\\\"'\"",
+          "toolCall": {
+            "toolCallId": "tc-1",
+            "title": "/bin/zsh -lc \"LOOP_COUNTER=1 bash -lc 'echo \\\"$LOOP_COUNTER\\\"'\"",
+            "kind": "execute",
+            "status": "completed",
+            "output": "1"
+          }
+        },
+        {
+          "kind": "toolCall",
+          "text": "/bin/zsh -lc 'sleep 2'",
+          "toolCall": {
+            "toolCallId": "tc-2",
+            "title": "/bin/zsh -lc 'sleep 2'",
+            "kind": "execute",
+            "status": "completed"
+          }
+        }
+      ]
+    }
+  ],
+  "initialKeys": [
+    { "index": 0, "key": "turn:t2:user:u2" },
+    { "index": 1, "key": "turn:t2:assistant:local-rich" }
+  ],
+  "steps": [
+    {
+      "kind": "thread_read",
+      "preferLocalRichness": true,
+      "result": {
+        "thread": {
+          "id": "fixture-thread-2",
+          "turns": [
+            {
+              "id": "t2",
+              "status": "completed",
+              "items": [
+                {
+                  "type": "agent_message",
+                  "id": "a-2-run",
+                  "text": "Running the same skill again with 6 iterations and 2-second delays, using separate command calls per iteration."
+                },
+                {
+                  "type": "user_message",
+                  "id": "u2",
+                  "text": "try again, 6 times, 2s delay"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "kind": "update",
+      "method": "turn/started",
+      "params": {
+        "threadId": "fixture-thread-2",
+        "turn": { "id": "t2" }
+      }
+    },
+    {
+      "kind": "update",
+      "method": "item/agentMessage/delta",
+      "params": {
+        "threadId": "fixture-thread-2",
+        "turnId": "t2",
+        "delta": "\n\nHalfway through and proceeding sequentially with the remaining iterations and delays."
+      }
+    }
+  ],
+  "expectations": {
+    "messageCount": 2,
+    "orderedMessages": [
+      {
+        "role": "user",
+        "contains": "try again, 6 times, 2s delay"
+      },
+      {
+        "role": "assistant",
+        "contains": "Running the same skill again with 6 iterations"
+      }
+    ],
+    "containsCounts": [
+      {
+        "role": "assistant",
+        "contains": "Running the same skill again with 6 iterations and 2-second delays, using separate command calls per iteration.",
+        "count": 1
+      },
+      {
+        "role": "assistant",
+        "contains": "Halfway through and proceeding sequentially with the remaining iterations and delays.",
+        "count": 1
+      },
+      {
+        "role": "user",
+        "contains": "try again, 6 times, 2s delay",
+        "count": 1
+      }
+    ]
+  }
+}

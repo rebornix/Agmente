@@ -97,6 +97,10 @@ final class ACPSessionViewModel: ObservableObject {
         streamingMessageId = messages.last(where: { $0.isStreaming })?.id
     }
 
+    func currentStreamingAssistantMessageId() -> UUID? {
+        streamingMessageId
+    }
+
     // MARK: - Image Attachments
 
     var canAttachMoreImages: Bool {
@@ -712,6 +716,15 @@ final class ACPSessionViewModel: ObservableObject {
         guard !text.isEmpty else { return }
         let index = ensureStreamingAssistantMessage()
 
+        if kind == .message, chatMessages[index].segments.isEmpty {
+            let existing = chatMessages[index].content.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !existing.isEmpty {
+                // Resume snapshots can restore plain assistant content without segments.
+                // Seed a message segment first so subsequent deltas append instead of replacing content.
+                chatMessages[index].segments.append(AssistantSegment(kind: .message, text: chatMessages[index].content))
+            }
+        }
+
         if let lastIndex = chatMessages[index].segments.indices.last,
            chatMessages[index].segments[lastIndex].kind == kind,
            chatMessages[index].segments[lastIndex].toolCall == nil {
@@ -829,13 +842,42 @@ final class ACPSessionViewModel: ObservableObject {
     func ensureStreamingAssistantMessage() -> Int {
         if let streamingId = streamingMessageId,
            let index = chatMessages.firstIndex(where: { $0.id == streamingId && $0.role == .assistant }) {
-            return index
+            // If a newer user prompt exists after the current streaming assistant row,
+            // this pointer is stale (commonly after reopen/merge). Start a fresh
+            // streaming assistant row at the tail so deltas attach to the latest turn.
+            if let lastUserIndex = chatMessages.lastIndex(where: { $0.role == .user }),
+               lastUserIndex > index {
+                chatMessages[index].isStreaming = false
+            } else {
+                return index
+            }
         }
 
         let message = ChatMessage(role: .assistant, content: "", isStreaming: true)
         chatMessages.append(message)
         streamingMessageId = message.id
         return chatMessages.indices.last ?? 0
+    }
+
+    /// Rebinds streaming state to a specific assistant message.
+    /// If `messageId` is nil, all assistant messages are marked non-streaming.
+    func bindStreamingAssistantMessage(to messageId: UUID?) {
+        var didChange = false
+        for index in chatMessages.indices {
+            guard chatMessages[index].role == .assistant else { continue }
+            let shouldStream = (chatMessages[index].id == messageId)
+            if chatMessages[index].isStreaming != shouldStream {
+                chatMessages[index].isStreaming = shouldStream
+                didChange = true
+            }
+        }
+        if streamingMessageId != messageId {
+            streamingMessageId = messageId
+            didChange = true
+        }
+        if didChange {
+            saveChatState()
+        }
     }
 
     func rebuildAssistantContent(at index: Int) {

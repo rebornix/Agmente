@@ -21,6 +21,7 @@ SwiftUI app layer and protocol routing logic:
 - On reconnect (and open when possible), prefer non-destructive reattachment to loaded in-memory threads via `addConversationListener` + `thread/read`; only fall back to `thread/resume` when the thread is not loaded or listener attach is unavailable.
 - For resume-based hydration paths, issue at least one follow-up `thread/resume` to converge eventual-consistency gaps where streaming deltas are not replayed.
 - Use `persistExtendedHistory: true` on `thread/start` and `thread/resume` so cold app relaunch can recover richer tool-call history from rollout-backed reads.
+- During Codex `thread/read` merge, preserve local rich assistant rows (tool calls/thoughts) while suppressing duplicate markdown-only assistant inserts already represented by those rows; per-turn ordering must remain user-first before assistant output.
 - Plan mode output must map to `.plan` assistant segments from Codex notifications (`item/plan/delta`, `turn/plan/updated`) and from completed assistant message payloads containing `<proposed_plan>...</proposed_plan>`.
 - For plan streaming, prefer typed app-server notifications (for example `item/plan/delta`) over mirrored raw `codex/event/*` notifications to avoid duplicate rendering.
 - Codex permissions selector maps to `turn/start` overrides on every turn:
