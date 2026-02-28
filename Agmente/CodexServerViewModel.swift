@@ -1024,6 +1024,24 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
             ) {
                 return true
             }
+
+            // Segment-level thought matching: when a local tool-rich message has thought
+            // segments that only received partial streaming text before the app went to
+            // background, the server's thread/read returns the full final text. The
+            // full-content containment check above fails because the candidate (resume)
+            // has MORE text than the existing partial segment. Check bidirectionally at
+            // the segment level to catch this case.
+            if existingHasToolCall && !normalizedCandidateText.isEmpty {
+                let existingThoughtTexts = existing.segments
+                    .filter { $0.kind == .thought }
+                    .map { normalizedAssistantText($0.text) }
+                    .filter { !$0.isEmpty }
+                if existingThoughtTexts.contains(where: { existingThought in
+                    normalizedCandidateText.contains(existingThought) || existingThought.contains(normalizedCandidateText)
+                }) {
+                    return true
+                }
+            }
         }
 
         let candidateToolCallIDs = Set(

@@ -1,0 +1,144 @@
+{
+  "name": "thread_read_new_turn_reasoning_not_suppressed",
+  "threadId": "fixture-thread-new-turn-reasoning",
+  "initialMessages": [
+    {
+      "role": "user",
+      "content": "what is dependency injection?"
+    },
+    {
+      "role": "assistant",
+      "content": "**Looking up patterns**\nDependency injection is a design pattern.\nTool call: [execute] /bin/zsh -lc 'grep -r inject src/'",
+      "segments": [
+        {
+          "kind": "thought",
+          "text": "**Looking up patterns**"
+        },
+        {
+          "kind": "message",
+          "text": "Dependency injection is a design pattern."
+        },
+        {
+          "kind": "toolCall",
+          "text": "/bin/zsh -lc 'grep -r inject src/'",
+          "toolCall": {
+            "toolCallId": "tc-1",
+            "title": "/bin/zsh -lc 'grep -r inject src/'",
+            "kind": "execute",
+            "status": "completed",
+            "output": "src/container.ts: inject()"
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": "show me an example"
+    }
+  ],
+  "initialKeys": [
+    { "index": 0, "key": "turn:t1:user:u1" },
+    { "index": 2, "key": "turn:t2:user:u2" }
+  ],
+  "steps": [
+    {
+      "kind": "thread_read",
+      "preferLocalRichness": true,
+      "result": {
+        "thread": {
+          "id": "fixture-thread-new-turn-reasoning",
+          "turns": [
+            {
+              "id": "t1",
+              "status": "completed",
+              "items": [
+                {
+                  "type": "user_message",
+                  "id": "u1",
+                  "text": "what is dependency injection?"
+                },
+                {
+                  "type": "reasoning",
+                  "id": "r1",
+                  "text": "**Looking up patterns**\n\nChecking the codebase for injection examples."
+                },
+                {
+                  "type": "agent_message",
+                  "id": "a1",
+                  "text": "Dependency injection is a design pattern."
+                }
+              ]
+            },
+            {
+              "id": "t2",
+              "status": "completed",
+              "items": [
+                {
+                  "type": "user_message",
+                  "id": "u2",
+                  "text": "show me an example"
+                },
+                {
+                  "type": "reasoning",
+                  "id": "r2",
+                  "text": "**Searching for concrete examples**\n\n**Building sample code**"
+                },
+                {
+                  "type": "agent_message",
+                  "id": "a2",
+                  "text": "Here is a concrete example of dependency injection using a container."
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "expectations": {
+    "orderedMessages": [
+      {
+        "role": "user",
+        "contains": "what is dependency injection?"
+      },
+      {
+        "role": "assistant",
+        "contains": "Dependency injection is a design pattern"
+      },
+      {
+        "role": "user",
+        "contains": "show me an example"
+      },
+      {
+        "role": "assistant",
+        "contains": "Searching for concrete examples"
+      },
+      {
+        "role": "assistant",
+        "contains": "Here is a concrete example"
+      }
+    ],
+    "containsCounts": [
+      {
+        "role": "assistant",
+        "contains": "Looking up patterns",
+        "count": 1
+      },
+      {
+        "role": "assistant",
+        "contains": "Searching for concrete examples",
+        "count": 1
+      },
+      {
+        "role": "assistant",
+        "contains": "Building sample code",
+        "count": 1
+      },
+      {
+        "role": "assistant",
+        "contains": "Here is a concrete example",
+        "count": 1
+      }
+    ]
+  }
+}

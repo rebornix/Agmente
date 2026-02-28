@@ -174,6 +174,53 @@ final class CodexServerViewModelTests: XCTestCase {
         XCTAssertEqual(preset.turnSandboxPolicy, .object(["type": .string("dangerFullAccess")]))
     }
 
+    func testCommandExecutionDisplayTitle_StripsShellWrapper() {
+        let title = CodexServerViewModel.commandExecutionDisplayTitle(
+            for: "/bin/zsh -lc 'rg \"tool call\" Agmente'"
+        )
+
+        XCTAssertEqual(title, "rg \"tool call\" Agmente")
+    }
+
+    func testCommandExecutionDisplayTitle_StripsEnvShellWrapper() {
+        let title = CodexServerViewModel.commandExecutionDisplayTitle(
+            for: "/usr/bin/env zsh -lc \"swift test --package-path ACPClient\""
+        )
+
+        XCTAssertEqual(title, "swift test --package-path ACPClient")
+    }
+
+    func testCommandExecutionDisplayTitle_KeepsDirectScriptCommand() {
+        let title = CodexServerViewModel.commandExecutionDisplayTitle(
+            for: "./scripts/bootstrap.sh --verbose"
+        )
+
+        XCTAssertEqual(title, "./scripts/bootstrap.sh --verbose")
+    }
+
+    func testCommandExecutionDisplayTitle_StripsPowerShellWrapper() {
+        let title = CodexServerViewModel.commandExecutionDisplayTitle(
+            for: "pwsh -NoProfile -Command \"git status\""
+        )
+
+        XCTAssertEqual(title, "git status")
+    }
+
+    func testCommandExecutionDisplayTitle_StripsCmdWrapper() {
+        let title = CodexServerViewModel.commandExecutionDisplayTitle(
+            for: "cmd /C \"dir src\""
+        )
+
+        XCTAssertEqual(title, "dir src")
+    }
+
+    func testCommandExecutionDisplayTitle_KeepsUnknownPowerShellFlags() {
+        let raw = "powershell -ExecutionPolicy Bypass -Command \"git status\""
+        let title = CodexServerViewModel.commandExecutionDisplayTitle(for: raw)
+
+        XCTAssertEqual(title, raw)
+    }
+
     /// Test that selectedServerViewModelAny works for both ViewModel types.
     func testSelectedServerViewModelAny_WorksForBothTypes() {
         let model = makeModel()

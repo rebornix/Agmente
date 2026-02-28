@@ -1,0 +1,160 @@
+{
+  "name": "thread_read_combined_reasoning_dedup_after_completed_turn",
+  "threadId": "fixture-thread-combined-reasoning",
+  "initialMessages": [
+    {
+      "role": "user",
+      "content": "explain how tool calls work"
+    },
+    {
+      "role": "assistant",
+      "content": "**Searching for tool call handling**\nI'm checking the code paths for tool call handling.\nTool call: [execute] /bin/zsh -lc 'grep -r toolCall src/'\nTool call: [execute] /bin/zsh -lc 'cat src/handler.ts'\n**Exploring protocol layer**\nI found the handling points. Checking the protocol runtime next.\nTool call: [execute] /bin/zsh -lc 'cat src/protocol.ts'\n**Reviewing implementation details**\nHere is the summary of tool call handling.",
+      "segments": [
+        {
+          "kind": "thought",
+          "text": "**Searching for tool call handling**"
+        },
+        {
+          "kind": "message",
+          "text": "I'm checking the code paths for tool call handling."
+        },
+        {
+          "kind": "toolCall",
+          "text": "/bin/zsh -lc 'grep -r toolCall src/'",
+          "toolCall": {
+            "toolCallId": "tc-1",
+            "title": "/bin/zsh -lc 'grep -r toolCall src/'",
+            "kind": "execute",
+            "status": "completed",
+            "output": "src/handler.ts:  handleToolCall()"
+          }
+        },
+        {
+          "kind": "toolCall",
+          "text": "/bin/zsh -lc 'cat src/handler.ts'",
+          "toolCall": {
+            "toolCallId": "tc-2",
+            "title": "/bin/zsh -lc 'cat src/handler.ts'",
+            "kind": "execute",
+            "status": "completed",
+            "output": "function handleToolCall() { ... }"
+          }
+        },
+        {
+          "kind": "thought",
+          "text": "**Exploring protocol layer**"
+        },
+        {
+          "kind": "message",
+          "text": "I found the handling points. Checking the protocol runtime next."
+        },
+        {
+          "kind": "toolCall",
+          "text": "/bin/zsh -lc 'cat src/protocol.ts'",
+          "toolCall": {
+            "toolCallId": "tc-3",
+            "title": "/bin/zsh -lc 'cat src/protocol.ts'",
+            "kind": "execute",
+            "status": "completed",
+            "output": "export class Protocol { ... }"
+          }
+        },
+        {
+          "kind": "thought",
+          "text": "**Reviewing implementation details**"
+        },
+        {
+          "kind": "message",
+          "text": "Here is the summary of tool call handling."
+        }
+      ]
+    }
+  ],
+  "initialKeys": [
+    { "index": 0, "key": "turn:t1:user:u1" }
+  ],
+  "steps": [
+    {
+      "kind": "thread_read",
+      "preferLocalRichness": true,
+      "result": {
+        "thread": {
+          "id": "fixture-thread-combined-reasoning",
+          "turns": [
+            {
+              "id": "t1",
+              "status": "completed",
+              "items": [
+                {
+                  "type": "user_message",
+                  "id": "u1",
+                  "text": "explain how tool calls work"
+                },
+                {
+                  "type": "reasoning",
+                  "id": "r1",
+                  "text": "**Searching for tool call handling**\n\nI need to look at the codebase first."
+                },
+                {
+                  "type": "agent_message",
+                  "id": "a1",
+                  "text": "I'm checking the code paths for tool call handling."
+                },
+                {
+                  "type": "reasoning",
+                  "id": "r2",
+                  "text": "**Exploring protocol layer**\n\n**Reviewing implementation details**"
+                },
+                {
+                  "type": "agent_message",
+                  "id": "a2",
+                  "text": "I found the handling points. Checking the protocol runtime next."
+                },
+                {
+                  "type": "agent_message",
+                  "id": "a3",
+                  "text": "Here is the summary of tool call handling."
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "expectations": {
+    "messageCount": 2,
+    "orderedMessages": [
+      {
+        "role": "user",
+        "contains": "explain how tool calls work"
+      },
+      {
+        "role": "assistant",
+        "contains": "I'm checking the code paths"
+      }
+    ],
+    "containsCounts": [
+      {
+        "role": "user",
+        "contains": "explain how tool calls work",
+        "count": 1
+      },
+      {
+        "role": "assistant",
+        "contains": "Searching for tool call handling",
+        "count": 1
+      },
+      {
+        "role": "assistant",
+        "contains": "Exploring protocol layer",
+        "count": 1
+      },
+      {
+        "role": "assistant",
+        "contains": "Reviewing implementation details",
+        "count": 1
+      }
+    ]
+  }
+}
