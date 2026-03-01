@@ -137,6 +137,14 @@ struct AddServerView: View {
                 .focused($focusedField, equals: .workingDirectory)
         } footer: {
             VStack(alignment: .leading, spacing: 8) {
+                Text(workingDirectoryHelpText)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                if isWorkingDirectoryEmpty, serverType == .codexAppServer {
+                    Text("Leave blank if you do not want a default working directory.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
                 if hasAttemptedSave && isWorkingDirectoryEmpty && !allowsEmptyWorkingDirectory {
                     Label("A working directory is required for the agent to operate safely.", systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
@@ -271,6 +279,15 @@ private extension AddServerView {
 
     var allowsEmptyWorkingDirectory: Bool {
         true
+    }
+
+    var workingDirectoryHelpText: String {
+        switch serverType {
+        case .codexAppServer:
+            return "Optional for Codex. Used as the default working directory for new threads and cwd-scoped features like skills. Not required to add the server or load existing threads."
+        case .acp:
+            return "Some ACP agents require this when creating or listing sessions."
+        }
     }
     
     var canSave: Bool {
@@ -473,6 +490,28 @@ private struct ServerSummaryOverlay: View {
                         .overlay(
                             RoundedRectangle(cornerRadius: 12, style: .continuous)
                                 .stroke(Color.red.opacity(0.3), lineWidth: 1)
+                        )
+                    }
+
+                    if isCodexServer && workingDirectory.isEmpty {
+                        HStack(alignment: .top, spacing: 10) {
+                            Image(systemName: "folder.badge.questionmark")
+                                .foregroundStyle(.secondary)
+                                .font(.title3)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("No Default Working Directory")
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(.primary)
+                                Text("You can still connect and open existing threads. New threads will not have a preset working directory.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(Color(.systemGray6))
                         )
                     }
                     
