@@ -1,0 +1,156 @@
+{
+  "name": "thread_read_overlaps_inflight_streaming_preserves_order",
+  "threadId": "fixture-thread-inflight",
+  "initialActiveTurnId": "turn-2",
+  "initialMessages": [
+    {
+      "role": "user",
+      "content": "explain the architecture"
+    },
+    {
+      "role": "assistant",
+      "content": "Let me look at the project structure first.\nTool call: [execute] /bin/zsh -lc 'ls src/'\nTool call: [execute] /bin/zsh -lc 'cat src/main.ts'",
+      "segments": [
+        {
+          "kind": "message",
+          "text": "Let me look at the project structure first."
+        },
+        {
+          "kind": "toolCall",
+          "text": "/bin/zsh -lc 'ls src/'",
+          "toolCall": {
+            "toolCallId": "tc-1",
+            "title": "/bin/zsh -lc 'ls src/'",
+            "kind": "execute",
+            "status": "completed",
+            "output": "main.ts\nhandler.ts\nutils.ts"
+          }
+        },
+        {
+          "kind": "toolCall",
+          "text": "/bin/zsh -lc 'cat src/main.ts'",
+          "toolCall": {
+            "toolCallId": "tc-2",
+            "title": "/bin/zsh -lc 'cat src/main.ts'",
+            "kind": "execute",
+            "status": "completed",
+            "output": "import { handler } from './handler';"
+          }
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": "now explain the data flow"
+    },
+    {
+      "role": "assistant",
+      "content": "I'll trace how data moves through the system.",
+      "isStreaming": true,
+      "segments": [
+        {
+          "kind": "message",
+          "text": "I'll trace how data moves through the system."
+        }
+      ]
+    }
+  ],
+  "initialKeys": [
+    { "index": 0, "key": "turn:turn-1:user:u1" },
+    { "index": 1, "key": "turn:turn-1:assistant:local-rich" },
+    { "index": 2, "key": "turn:turn-2:user:u2" }
+  ],
+  "steps": [
+    {
+      "kind": "thread_read",
+      "preferLocalRichness": true,
+      "result": {
+        "thread": {
+          "id": "fixture-thread-inflight",
+          "turns": [
+            {
+              "id": "turn-1",
+              "status": "completed",
+              "items": [
+                {
+                  "type": "user_message",
+                  "id": "u1",
+                  "text": "explain the architecture"
+                },
+                {
+                  "type": "agent_message",
+                  "id": "a1",
+                  "text": "Let me look at the project structure first."
+                }
+              ]
+            },
+            {
+              "id": "turn-2",
+              "status": "in_progress",
+              "items": [
+                {
+                  "type": "user_message",
+                  "id": "u2",
+                  "text": "now explain the data flow"
+                },
+                {
+                  "type": "agent_message",
+                  "id": "a2",
+                  "text": "I'll trace how data moves through the system."
+                },
+                {
+                  "type": "command_execution",
+                  "id": "ce1",
+                  "command": "/bin/zsh -lc 'cat src/handler.ts'",
+                  "output": "export function handler() { processRequest(); }"
+                },
+                {
+                  "type": "agent_message",
+                  "id": "a3",
+                  "text": "The data flows from main.ts through the handler module."
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "expectations": {
+    "orderedMessages": [
+      {
+        "role": "user",
+        "contains": "explain the architecture"
+      },
+      {
+        "role": "assistant",
+        "contains": "project structure"
+      },
+      {
+        "role": "user",
+        "contains": "now explain the data flow"
+      },
+      {
+        "role": "assistant",
+        "contains": "data moves through the system"
+      }
+    ],
+    "containsCounts": [
+      {
+        "role": "user",
+        "contains": "explain the architecture",
+        "count": 1
+      },
+      {
+        "role": "user",
+        "contains": "now explain the data flow",
+        "count": 1
+      },
+      {
+        "role": "assistant",
+        "contains": "data flows from main.ts",
+        "count": 1
+      }
+    ]
+  }
+}

@@ -1,0 +1,97 @@
+{
+  "name": "thread_read_after_background_turn_completion_no_duplicates",
+  "threadId": "fixture-thread-bg-complete",
+  "initialMessages": [
+    {
+      "role": "user",
+      "content": "refactor the utils module"
+    },
+    {
+      "role": "assistant",
+      "content": "I'll start by reading the current utils module.",
+      "isStreaming": false,
+      "segments": [
+        {
+          "kind": "message",
+          "text": "I'll start by reading the current utils module."
+        }
+      ]
+    }
+  ],
+  "initialKeys": [
+    { "index": 0, "key": "turn:turn-bg:user:u-bg" }
+  ],
+  "steps": [
+    {
+      "kind": "thread_read",
+      "preferLocalRichness": false,
+      "result": {
+        "thread": {
+          "id": "fixture-thread-bg-complete",
+          "turns": [
+            {
+              "id": "turn-bg",
+              "status": "completed",
+              "items": [
+                {
+                  "type": "user_message",
+                  "id": "u-bg",
+                  "text": "refactor the utils module"
+                },
+                {
+                  "type": "agent_message",
+                  "id": "a-bg-1",
+                  "text": "I'll start by reading the current utils module."
+                },
+                {
+                  "type": "command_execution",
+                  "id": "ce-bg-1",
+                  "command": "/bin/zsh -lc 'cat src/utils.ts'",
+                  "output": "export function parseDate() { ... }\nexport function formatCurrency() { ... }"
+                },
+                {
+                  "type": "agent_message",
+                  "id": "a-bg-2",
+                  "text": "The utils module has 142 lines. I've split it into dateUtils.ts and currencyUtils.ts for better separation of concerns."
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "expectations": {
+    "orderedMessages": [
+      {
+        "role": "user",
+        "contains": "refactor the utils module"
+      },
+      {
+        "role": "assistant",
+        "contains": "reading the current utils module"
+      },
+      {
+        "role": "assistant",
+        "contains": "split it into"
+      }
+    ],
+    "containsCounts": [
+      {
+        "role": "user",
+        "contains": "refactor the utils module",
+        "count": 1
+      },
+      {
+        "role": "assistant",
+        "contains": "reading the current utils module",
+        "count": 1
+      },
+      {
+        "role": "assistant",
+        "contains": "split it into",
+        "count": 1
+      }
+    ]
+  }
+}

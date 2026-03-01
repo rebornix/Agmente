@@ -786,4 +786,326 @@ final class CodexServerViewModelTests: XCTestCase {
 
         XCTAssertEqual(object["mode"], .string("plan"))
     }
+
+    // MARK: - Session-Switch Saved Turn Tests
+
+    /// Switching away from a thread with an active turn should save it in `savedTurnByThread`.
+    func testBeginOpenSessionRequest_SavesInFlightTurnForDepartingThread() {
+        let model = makeModel()
+        addServer(to: model)
+
+        let service = makeService()
+        let initRequest = ACP.AnyRequest(id: .int(1), method: "initialize", params: nil)
+        model.acpService(service, willSend: initRequest)
+        let result: ACP.Value = .object(["userAgent": .string("codex/1.0.0")])
+        model.acpService(service, didReceiveMessage: .response(ACP.AnyResponse(id: .int(1), result: result)))
+
+        guard let codexVM = model.selectedCodexServerViewModel else {
+            XCTFail("Expected CodexServerViewModel")
+            return
+        }
+
+        // Set up thread-A with an active turn
+        codexVM.setActiveSession("thread-A", cwd: "/workspace", modes: nil)
+        let turnStarted = JSONRPCMessage.notification(
+            JSONRPCNotification(
+                method: "turn/started",
+                params: .object([
+                    "threadId": .string("thread-A"),
+                    "turn": .object(["id": .string("turn-A1")]),
+                ])
+            )
+        )
+        codexVM.handleCodexMessage(turnStarted)
+
+        XCTAssertTrue(codexVM.isStreaming, "Thread-A should be streaming")
+
+        // Switch to thread-B — this should save thread-A's active turn
+        codexVM.beginOpenSessionRequestForTesting("thread-B")
+
+        XCTAssertEqual(
+            codexVM.savedTurnByThreadForTesting["thread-A"],
+            "turn-A1",
+            "Departing thread's active turn should be saved"
+        )
+    }
+
+    /// Reopening the same thread should NOT save a turn (it preserves in-flight state directly).
+    func testBeginOpenSessionRequest_DoesNotSaveTurnWhenReopeningSameThread() {
+        let model = makeModel()
+        addServer(to: model)
+
+        let service = makeService()
+        let initRequest = ACP.AnyRequest(id: .int(1), method: "initialize", params: nil)
+        model.acpService(service, willSend: initRequest)
+        let result: ACP.Value = .object(["userAgent": .string("codex/1.0.0")])
+        model.acpService(service, didReceiveMessage: .response(ACP.AnyResponse(id: .int(1), result: result)))
+
+        guard let codexVM = model.selectedCodexServerViewModel else {
+            XCTFail("Expected CodexServerViewModel")
+            return
+        }
+
+        codexVM.setActiveSession("thread-A", cwd: "/workspace", modes: nil)
+        let turnStarted = JSONRPCMessage.notification(
+            JSONRPCNotification(
+                method: "turn/started",
+                params: .object([
+                    "threadId": .string("thread-A"),
+                    "turn": .object(["id": .string("turn-A1")]),
+                ])
+            )
+        )
+        codexVM.handleCodexMessage(turnStarted)
+
+        // Re-open the same thread
+        codexVM.beginOpenSessionRequestForTesting("thread-A")
+
+        XCTAssertTrue(
+            codexVM.savedTurnByThreadForTesting.isEmpty,
+            "Reopening the same thread should not save a turn"
+        )
+    }
+
+    /// `turn/completed` for a background thread should clean up savedTurnByThread and finalize streaming.
+    func testTurnCompleted_CleansUpSavedTurnForBackgroundThread() {
+        let model = makeModel()
+        addServer(to: model)
+
+        let service = makeService()
+        let initRequest = ACP.AnyRequest(id: .int(1), method: "initialize", params: nil)
+        model.acpService(service, willSend: initRequest)
+        let result: ACP.Value = .object(["userAgent": .string("codex/1.0.0")])
+        model.acpService(service, didReceiveMessage: .response(ACP.AnyResponse(id: .int(1), result: result)))
+
+        guard let codexVM = model.selectedCodexServerViewModel else {
+            XCTFail("Expected CodexServerViewModel")
+            return
+        }
+
+        // Set up thread-A with a turn, then switch to thread-B
+        codexVM.setActiveSession("thread-A", cwd: "/workspace", modes: nil)
+        let turnStarted = JSONRPCMessage.notification(
+            JSONRPCNotification(
+                method: "turn/started",
+                params: .object([
+                    "threadId": .string("thread-A"),
+                    "turn": .object(["id": .string("turn-A1")]),
+                ])
+            )
+        )
+        codexVM.handleCodexMessage(turnStarted)
+
+        // Switch to thread-B (saves thread-A's turn)
+        codexVM.beginOpenSessionRequestForTesting("thread-B")
+        XCTAssertEqual(codexVM.savedTurnByThreadForTesting["thread-A"], "turn-A1")
+
+        // turn/completed arrives for background thread-A
+        let turnCompleted = JSONRPCMessage.notification(
+            JSONRPCNotification(
+                method: "turn/completed",
+                params: .object([
+                    "threadId": .string("thread-A"),
+                    "turn": .object(["id": .string("turn-A1")]),
+                ])
+            )
+        )
+        codexVM.handleCodexMessage(turnCompleted)
+
+        XCTAssertNil(
+            codexVM.savedTurnByThreadForTesting["thread-A"],
+            "turn/completed should clean up saved turn for the background thread"
+        )
+    }
+
+    /// Non-turn notifications for background threads should still be dropped.
+    func testNonTurnNotifications_StillDroppedForBackgroundThreads() {
+        let model = makeModel()
+        addServer(to: model)
+
+        let service = makeService()
+        let initRequest = ACP.AnyRequest(id: .int(1), method: "initialize", params: nil)
+        model.acpService(service, willSend: initRequest)
+        let result: ACP.Value = .object(["userAgent": .string("codex/1.0.0")])
+        model.acpService(service, didReceiveMessage: .response(ACP.AnyResponse(id: .int(1), result: result)))
+
+        guard let codexVM = model.selectedCodexServerViewModel else {
+            XCTFail("Expected CodexServerViewModel")
+            return
+        }
+
+        // Set up thread-A, then switch to thread-B
+        codexVM.setActiveSession("thread-A", cwd: "/workspace", modes: nil)
+        codexVM.beginOpenSessionRequestForTesting("thread-B")
+
+        // Send a streaming delta for background thread-A — should be dropped
+        let delta = JSONRPCMessage.notification(
+            JSONRPCNotification(
+                method: "item/agentMessage/delta",
+                params: .object([
+                    "threadId": .string("thread-A"),
+                    "turnId": .string("turn-A1"),
+                    "delta": .string("background text"),
+                ])
+            )
+        )
+        codexVM.handleCodexMessage(delta)
+
+        // thread-B's session should not contain thread-A's text
+        let messages = codexVM.currentSessionViewModel?.chatMessages ?? []
+        let hasBackgroundText = messages.contains { $0.content.contains("background text") }
+        XCTAssertFalse(hasBackgroundText, "Streaming deltas for background threads should still be dropped")
+    }
+
+    /// `turn/completed` for the active thread should also clean up savedTurnByThread.
+    func testTurnCompleted_CleansUpSavedTurnForActiveThread() {
+        let model = makeModel()
+        addServer(to: model)
+
+        let service = makeService()
+        let initRequest = ACP.AnyRequest(id: .int(1), method: "initialize", params: nil)
+        model.acpService(service, willSend: initRequest)
+        let result: ACP.Value = .object(["userAgent": .string("codex/1.0.0")])
+        model.acpService(service, didReceiveMessage: .response(ACP.AnyResponse(id: .int(1), result: result)))
+
+        guard let codexVM = model.selectedCodexServerViewModel else {
+            XCTFail("Expected CodexServerViewModel")
+            return
+        }
+
+        // Manually seed a saved turn (as if we had switched away and back)
+        codexVM.setActiveSession("thread-A", cwd: "/workspace", modes: nil)
+        codexVM.seedSavedTurnForTesting(threadId: "thread-A", turnId: "turn-A1")
+
+        // Start a new turn on the active thread
+        let turnStarted = JSONRPCMessage.notification(
+            JSONRPCNotification(
+                method: "turn/started",
+                params: .object([
+                    "threadId": .string("thread-A"),
+                    "turn": .object(["id": .string("turn-A2")]),
+                ])
+            )
+        )
+        codexVM.handleCodexMessage(turnStarted)
+
+        // Complete the turn
+        let turnCompleted = JSONRPCMessage.notification(
+            JSONRPCNotification(
+                method: "turn/completed",
+                params: .object([
+                    "threadId": .string("thread-A"),
+                    "turn": .object(["id": .string("turn-A2")]),
+                ])
+            )
+        )
+        codexVM.handleCodexMessage(turnCompleted)
+
+        XCTAssertNil(
+            codexVM.savedTurnByThreadForTesting["thread-A"],
+            "turn/completed on the active thread should also clean up savedTurnByThread"
+        )
+    }
+
+    /// `removeAllSessionViewModels` should clear savedTurnByThread.
+    func testRemoveAllSessionViewModels_ClearsSavedTurns() {
+        let model = makeModel()
+        addServer(to: model)
+
+        let service = makeService()
+        let initRequest = ACP.AnyRequest(id: .int(1), method: "initialize", params: nil)
+        model.acpService(service, willSend: initRequest)
+        let result: ACP.Value = .object(["userAgent": .string("codex/1.0.0")])
+        model.acpService(service, didReceiveMessage: .response(ACP.AnyResponse(id: .int(1), result: result)))
+
+        guard let codexVM = model.selectedCodexServerViewModel else {
+            XCTFail("Expected CodexServerViewModel")
+            return
+        }
+
+        codexVM.seedSavedTurnForTesting(threadId: "thread-A", turnId: "turn-A1")
+        codexVM.seedSavedTurnForTesting(threadId: "thread-B", turnId: "turn-B1")
+
+        XCTAssertEqual(codexVM.savedTurnByThreadForTesting.count, 2)
+
+        codexVM.removeAllSessionViewModels()
+
+        XCTAssertTrue(
+            codexVM.savedTurnByThreadForTesting.isEmpty,
+            "removeAllSessionViewModels should clear all saved turns"
+        )
+    }
+
+    /// Full session-switch scenario: streaming on A → switch to B → streaming items on A should
+    /// not reach B's chat, and saved turn state tracks correctly throughout.
+    func testSessionSwitch_FullScenario_StreamingIsolation() {
+        let model = makeModel()
+        addServer(to: model)
+
+        let service = makeService()
+        let initRequest = ACP.AnyRequest(id: .int(1), method: "initialize", params: nil)
+        model.acpService(service, willSend: initRequest)
+        let result: ACP.Value = .object(["userAgent": .string("codex/1.0.0")])
+        model.acpService(service, didReceiveMessage: .response(ACP.AnyResponse(id: .int(1), result: result)))
+
+        guard let codexVM = model.selectedCodexServerViewModel else {
+            XCTFail("Expected CodexServerViewModel")
+            return
+        }
+
+        // 1. Start streaming on thread-A
+        codexVM.setActiveSession("thread-A", cwd: "/workspace", modes: nil)
+        codexVM.handleCodexMessage(.notification(JSONRPCNotification(
+            method: "turn/started",
+            params: .object([
+                "threadId": .string("thread-A"),
+                "turn": .object(["id": .string("turn-A1")]),
+            ])
+        )))
+        codexVM.handleCodexMessage(.notification(JSONRPCNotification(
+            method: "item/agentMessage/delta",
+            params: .object([
+                "threadId": .string("thread-A"),
+                "turnId": .string("turn-A1"),
+                "delta": .string("Hello from A"),
+            ])
+        )))
+
+        let threadAMessages = codexVM.currentSessionViewModel?.chatMessages ?? []
+        XCTAssertTrue(threadAMessages.contains(where: { $0.content.contains("Hello from A") }))
+
+        // 2. Switch to thread-B
+        codexVM.beginOpenSessionRequestForTesting("thread-B")
+        XCTAssertEqual(codexVM.savedTurnByThreadForTesting["thread-A"], "turn-A1")
+
+        // 3. More deltas arrive for thread-A — should be dropped
+        codexVM.handleCodexMessage(.notification(JSONRPCNotification(
+            method: "item/agentMessage/delta",
+            params: .object([
+                "threadId": .string("thread-A"),
+                "turnId": .string("turn-A1"),
+                "delta": .string(" more text from A"),
+            ])
+        )))
+
+        let threadBMessages = codexVM.currentSessionViewModel?.chatMessages ?? []
+        XCTAssertFalse(
+            threadBMessages.contains(where: { $0.content.contains("more text from A") }),
+            "Thread-A deltas should not appear on thread-B"
+        )
+
+        // 4. Thread-A's turn completes in background
+        codexVM.handleCodexMessage(.notification(JSONRPCNotification(
+            method: "turn/completed",
+            params: .object([
+                "threadId": .string("thread-A"),
+                "turn": .object(["id": .string("turn-A1")]),
+            ])
+        )))
+
+        XCTAssertNil(
+            codexVM.savedTurnByThreadForTesting["thread-A"],
+            "Background turn/completed should clean up saved turn"
+        )
+    }
 }

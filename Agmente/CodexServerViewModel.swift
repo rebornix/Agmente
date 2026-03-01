@@ -168,6 +168,9 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
 
     private var activeThreadId: String?
     private var activeTurnId: String?
+    /// Tracks the last known in-flight turn for threads other than the active one.
+    /// Populated when switching away from a thread that has an active turn.
+    private var savedTurnByThread: [String: String] = [:]
     private var lastResumeAtByThreadId: [String: Date] = [:]
     private var postResumeRefreshTask: Task<Void, Never>?
     private var openSessionTask: Task<Void, Never>?
@@ -302,6 +305,7 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
         sessionMessageKeys.removeAll()
         turnStreamingMessageIds.removeAll()
         lastStreamingEventAtByThreadId.removeAll()
+        savedTurnByThread.removeAll()
         Task { await sessionLogger?.endSession() }
     }
 
@@ -331,6 +335,144 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
         let createdAt: Date?
         let activeTurnId: String?
         let turns: [Turn]
+    }
+
+    static func commandExecutionDisplayTitle(for command: String?) -> String {
+        guard let command else { return "Command execution" }
+        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "Command execution" }
+
+        if let unwrapped = unwrapShellWrappedCommand(trimmed) {
+            return unwrapped
+        }
+
+        return trimmed
+    }
+
+    private static func unwrapShellWrappedCommand(_ command: String) -> String? {
+        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        if trimmed.hasPrefix("/usr/bin/env ") {
+            let remainder = String(trimmed.dropFirst("/usr/bin/env ".count))
+            return unwrapShellWrappedCommand(remainder)
+        }
+
+        if let unwrapped = unwrapPosixShellCommand(trimmed) {
+            return unwrapped
+        }
+        if let unwrapped = unwrapPowerShellCommand(trimmed) {
+            return unwrapped
+        }
+        if let unwrapped = unwrapCmdCommand(trimmed) {
+            return unwrapped
+        }
+        return nil
+    }
+
+    private static func unwrapPosixShellCommand(_ command: String) -> String? {
+        let parts = command.split(maxSplits: 2, whereSeparator: \.isWhitespace)
+        guard parts.count == 3 else { return nil }
+
+        let executable = String(parts[0])
+        let flag = String(parts[1])
+        let shell = lastPathComponent(in: executable)
+        guard ["zsh", "bash", "sh"].contains(shell) else { return nil }
+        guard flag == "-c" || flag == "-lc" else { return nil }
+
+        let inner = String(parts[2]).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !inner.isEmpty else { return nil }
+        return stripMatchingOuterQuotes(inner)
+    }
+
+    private static func unwrapPowerShellCommand(_ command: String) -> String? {
+        guard let tokens = splitCommandLine(command), tokens.count >= 3 else { return nil }
+        let shell = lastPathComponent(in: tokens[0])
+        guard ["powershell", "powershell.exe", "pwsh", "pwsh.exe"].contains(shell) else {
+            return nil
+        }
+
+        let allowedFlags = Set(["-nologo", "-noprofile", "-command", "-c"])
+        var index = 1
+        while index < tokens.count {
+            let token = tokens[index]
+            let lower = token.lowercased()
+            guard allowedFlags.contains(lower) else { return nil }
+
+            if lower == "-command" || lower == "-c" {
+                guard index + 1 == tokens.count - 1 else { return nil }
+                let script = tokens[index + 1].trimmingCharacters(in: .whitespacesAndNewlines)
+                return script.isEmpty ? nil : script
+            }
+
+            index += 1
+        }
+
+        return nil
+    }
+
+    private static func unwrapCmdCommand(_ command: String) -> String? {
+        guard let tokens = splitCommandLine(command), tokens.count >= 3 else { return nil }
+        let executable = lastPathComponent(in: tokens[0])
+        guard executable == "cmd" || executable == "cmd.exe" else { return nil }
+
+        let flag = tokens[1].lowercased()
+        guard flag == "/c" else { return nil }
+        guard tokens.count == 3 else { return nil }
+
+        let inner = tokens[2].trimmingCharacters(in: .whitespacesAndNewlines)
+        return inner.isEmpty ? nil : inner
+    }
+
+    private static func splitCommandLine(_ text: String) -> [String]? {
+        var tokens: [String] = []
+        var current = ""
+        var quote: Character?
+
+        for char in text {
+            if let activeQuote = quote {
+                if char == activeQuote {
+                    quote = nil
+                } else {
+                    current.append(char)
+                }
+                continue
+            }
+
+            if char == "\"" || char == "'" {
+                quote = char
+            } else if char.isWhitespace {
+                if !current.isEmpty {
+                    tokens.append(current)
+                    current.removeAll(keepingCapacity: true)
+                }
+            } else {
+                current.append(char)
+            }
+        }
+
+        guard quote == nil else { return nil }
+        if !current.isEmpty {
+            tokens.append(current)
+        }
+        return tokens.isEmpty ? nil : tokens
+    }
+
+    private static func lastPathComponent(in path: String) -> String {
+        let separators = CharacterSet(charactersIn: "/\\")
+        let components = path.components(separatedBy: separators)
+        return (components.last ?? path).lowercased()
+    }
+
+    private static func stripMatchingOuterQuotes(_ text: String) -> String {
+        guard text.count >= 2 else { return text }
+        guard let first = text.first, let last = text.last else { return text }
+        guard (first == "'" && last == "'") || (first == "\"" && last == "\"") else {
+            return text
+        }
+
+        let unquoted = String(text.dropFirst().dropLast())
+        return unquoted.isEmpty ? text : unquoted
     }
 
     private func ensureInitializedAck() async {
@@ -510,13 +652,16 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
                 let existingMessages = sessionViewModels[id]?.chatMessages ?? []
                 let hasStreamingMessageBeforeResume = existingMessages.contains(where: { $0.isStreaming })
                 let activeTurnBeforeResume = (id == sessionId) ? activeTurnId : nil
+                let savedTurnForThread = savedTurnByThread.removeValue(forKey: id)
                 let hadStreamingBeforeResume = activeTurnBeforeResume != nil
+                    || savedTurnForThread != nil
                     || hasStreamingMessageBeforeResume
-                let likelyInFlightStreaming = isLikelyInFlightStreamingState(
-                    threadId: id,
-                    activeTurnId: activeTurnBeforeResume,
-                    hasStreamingMessage: hasStreamingMessageBeforeResume
-                )
+                let likelyInFlightStreaming = savedTurnForThread != nil
+                    || isLikelyInFlightStreamingState(
+                        threadId: id,
+                        activeTurnId: activeTurnBeforeResume,
+                        hasStreamingMessage: hasStreamingMessageBeforeResume
+                    )
                 trace(
                     "openSession pre-resume thread=\(id) existingMessages=\(existingMessages.count) existingToolCalls=\(countToolCallSegments(in: existingMessages)) hadStreaming=\(hadStreamingBeforeResume) likelyInFlight=\(likelyInFlightStreaming)"
                 )
@@ -620,9 +765,9 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
                     }
                 }
 
-                if usedResumeBasedHydration {
+                if usedResumeBasedHydration || staleResumeMissingActiveTurn {
                     schedulePostResumeRefreshIfNeeded(
-                        source: "open",
+                        source: staleResumeMissingActiveTurn ? "open/stale" : "open",
                         threadId: id,
                         existingMessages: existingMessages,
                         resumeResult: result,
@@ -1474,8 +1619,7 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
 
                 case .commandExecution(let itemId, let command, let output):
                     stats.commandItems += 1
-                    let title = command?.trimmingCharacters(in: .whitespacesAndNewlines)
-                    let displayTitle = (title?.isEmpty == false) ? title! : "Command execution"
+                    let displayTitle = Self.commandExecutionDisplayTitle(for: command)
                     let toolCall = ToolCallDisplay(
                         toolCallId: itemId,
                         title: displayTitle,
@@ -2047,6 +2191,13 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
         let hadStreamingBeforeOpen = hasStreamingAssistantMessage(in: id)
         let preserveInFlightTurnState = reopeningSameThread && (activeTurnId != nil || hadStreamingBeforeOpen)
         let preservedActiveTurnId = activeTurnId
+
+        // Save the in-flight turn for the departing thread so we can detect
+        // it when the user navigates back and avoid racing thread/read with
+        // still-active streaming.
+        if !preserveInFlightTurnState, let oldThread = activeThreadId, let oldTurn = activeTurnId, oldThread != id {
+            savedTurnByThread[oldThread] = oldTurn
+        }
 
         pendingSessionLoad = id
         sessionId = id
@@ -2731,7 +2882,19 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
                 "notif method=\(notification.method) threadId=\(threadId ?? "nil") turnId=\(turnId ?? "nil") activeThread=\(activeThreadId ?? "nil") activeTurn=\(activeTurnId ?? "nil")"
             )
             if let activeThreadId, let threadId, threadId != activeThreadId {
-                trace("notif dropped reason=threadMismatch method=\(notification.method) threadId=\(threadId) activeThread=\(activeThreadId)")
+                // Allow turn lifecycle events through for background threads so
+                // we can finalize streaming state and clean up saved-turn tracking.
+                if notification.method == "turn/completed" {
+                    let completedTurnId = params["turn"]?.objectValue?["id"]?.stringValue
+                    savedTurnByThread.removeValue(forKey: threadId)
+                    // Finalize streaming on the background session VM
+                    if let bgVM = sessionViewModels[threadId] {
+                        bgVM.bindStreamingAssistantMessage(to: nil)
+                    }
+                    trace("notif background turn/completed threadId=\(threadId) turnId=\(completedTurnId ?? "nil")")
+                } else {
+                    trace("notif dropped reason=threadMismatch method=\(notification.method) threadId=\(threadId) activeThread=\(activeThreadId)")
+                }
                 return
             }
 
@@ -2813,6 +2976,7 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
                 }
                 if let threadId {
                     lastStreamingEventAtByThreadId.removeValue(forKey: threadId)
+                    savedTurnByThread.removeValue(forKey: threadId)
                 }
                 currentSessionViewModel?.bindStreamingAssistantMessage(to: nil)
                 trace("notif apply method=turn/completed newActiveTurn=nil")
@@ -3030,8 +3194,7 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
             }
 
         case .commandExecution(let itemId, let command, let output):
-            let title = command?.trimmingCharacters(in: .whitespacesAndNewlines)
-            let displayTitle = (title?.isEmpty == false) ? title! : "Command execution"
+            let displayTitle = Self.commandExecutionDisplayTitle(for: command)
             let outputValue = status == "completed" ? output : nil
             viewModel.upsertToolCallFromAppServer(
                 toolCallId: itemId,
@@ -3413,7 +3576,7 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
         if request.method.contains("commandExecution") {
             approvalKind = "commandExecution"
             displayKind = "command"
-            displayTitle = command ?? "Command execution"
+            displayTitle = Self.commandExecutionDisplayTitle(for: command)
         } else if request.method.contains("fileChange") {
             approvalKind = "fileChange"
             displayKind = "file"
@@ -3993,6 +4156,25 @@ extension CodexServerViewModel {
 
     func mergedMessagesForTesting() -> [ChatMessage] {
         currentSessionViewModel?.chatMessages ?? []
+    }
+
+    // MARK: - Session-Switch Testing Helpers
+
+    /// Returns the saved in-flight turn IDs for all background threads.
+    var savedTurnByThreadForTesting: [String: String] {
+        savedTurnByThread
+    }
+
+    /// Simulates `beginOpenSessionRequest` for testing the session-switch save/clear logic
+    /// without triggering async open work.
+    @discardableResult
+    func beginOpenSessionRequestForTesting(_ id: String, cwd: String? = nil) -> UInt64 {
+        beginOpenSessionRequest(id, cwd: cwd)
+    }
+
+    /// Seeds a saved in-flight turn directly for testing.
+    func seedSavedTurnForTesting(threadId: String, turnId: String) {
+        savedTurnByThread[threadId] = turnId
     }
 }
 #endif
