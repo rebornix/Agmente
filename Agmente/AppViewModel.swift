@@ -923,6 +923,7 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
         setActiveSession(sessionToResume)
         guard connectionState == .connected else { return }
         if canLoadSession(for: serverId),
+           !connectionManager.isSessionMaterialized(sessionToResume),
            (selectedServerViewModelAny?.lastLoadedSession != sessionToResume || sessionViewModel?.chatMessages.isEmpty ?? true) {
             sendLoadSession(sessionToResume)
         } else {
@@ -1484,8 +1485,11 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
             }
 
             if canLoadSession(for: serverId) {
-                if selectedServerViewModelAny?.lastLoadedSession != targetSession || sessionViewModel?.chatMessages.isEmpty ?? true {
+                if !connectionManager.isSessionMaterialized(targetSession),
+                   selectedServerViewModelAny?.lastLoadedSession != targetSession || sessionViewModel?.chatMessages.isEmpty ?? true {
                     sendLoadSession(targetSession)
+                } else {
+                    pendingSessionLoad = nil
                 }
             } else {
                 setActiveSession(targetSession)
@@ -1717,23 +1721,7 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
 
     /// Update the working directory for a pending (local-only) session.
     func updatePendingSessionWorkingDirectory(_ newValue: String) {
-        guard isPendingSession else { return }
-        let sanitized = sanitizeWorkingDirectory(newValue)
-        pendingLocalSessionCwds[sessionId] = sanitized
-        
-        guard let serverId = selectedServerId else { return }
-        rememberUsedWorkingDirectory(sanitized, forServerId: serverId)
-        
-        if let index = sessionSummaries.firstIndex(where: { $0.id == sessionId }) {
-            let existing = sessionSummaries[index]
-            sessionSummaries[index] = SessionSummary(
-                id: existing.id,
-                title: existing.title,
-                cwd: sanitized,
-                updatedAt: existing.updatedAt
-            )
-        }
-        sessionSummaryCache[serverId] = sessionSummaries
+        selectedServerViewModelAny?.updatePendingSessionWorkingDirectory(newValue)
     }
 
     /// Load an existing session from the server using session/load.

@@ -48,6 +48,9 @@ protocol ServerViewModelProtocol: ObservableObject, Identifiable where ID == UUI
     /// Create a new session with optional working directory.
     func sendNewSession(workingDirectory: String?)
 
+    /// Update the working directory for a pending local session.
+    func updatePendingSessionWorkingDirectory(_ newValue: String)
+
     /// Open an existing session.
     func openSession(_ id: String)
 
@@ -119,6 +122,8 @@ extension ServerViewModelProtocol {
     func sendNewSession(workingDirectory: String? = nil) {
         sendNewSession(workingDirectory: workingDirectory)
     }
+
+    func updatePendingSessionWorkingDirectory(_ newValue: String) {}
 
     func sendPrompt(promptText: String, images: [ImageAttachment] = [], commandName: String? = nil) {
         sendPrompt(promptText: promptText, images: images, commandName: commandName)

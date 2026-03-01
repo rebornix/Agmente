@@ -21,6 +21,7 @@ SwiftUI app layer and protocol routing logic:
 - ACP and Codex paths must remain protocol-isolated.
 - UI should consume unified protocol (`ServerViewModelProtocol`) where possible.
 - Session/thread summaries should preserve server metadata (`cwd`, timestamps) when available.
+- ACP placeholder-session resolution must be non-destructive: when `session/new` returns a real session ID, preserve the in-memory user/assistant transcript, treat the new session as already materialized for the current connection, and avoid issuing a follow-up `session/load` if richer local state already exists or the fresh session is still empty.
 - Codex reconnect/resume must be non-destructive for active sessions: prefer richer in-memory chat/tool-call state when `thread/resume` is incomplete, and restore streaming/stop state from active turn status.
 - On reconnect (and open when possible), prefer non-destructive reattachment to loaded in-memory threads via `addConversationListener` + `thread/read`; only fall back to `thread/resume` when the thread is not loaded or listener attach is unavailable.
 - For resume-based hydration paths, issue at least one follow-up `thread/resume` to converge eventual-consistency gaps where streaming deltas are not replayed.

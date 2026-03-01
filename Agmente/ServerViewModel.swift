@@ -212,6 +212,7 @@ final class ServerViewModel: ObservableObject, Identifiable, ServerViewModelProt
 
         if let viewModel = sessionViewModels.removeValue(forKey: placeholderId) {
             sessionViewModels[resolvedId] = viewModel
+            viewModel.setSessionContext(serverId: id, sessionId: resolvedId)
 
             // Migrate cancellable
             if let cancellable = sessionViewModelCancellables.removeValue(forKey: placeholderId) {
@@ -557,9 +558,12 @@ final class ServerViewModel: ObservableObject, Identifiable, ServerViewModelProt
 
         // Migrate caches if ID changed
         if resolvedId != placeholderId {
-            cacheDelegate?.migrateCache(serverId: id, from: placeholderId, to: resolvedId)
+            migrateSessionRuntimeState(from: placeholderId, to: resolvedId)
         }
 
+        // A successful session/new yields a live session that can accept prompts immediately.
+        connectionManager.markSessionMaterialized(resolvedId)
+        lastLoadedSession = resolvedId
         setActiveSession(resolvedId, cwd: resolvedCwd, modes: modesInfo)
 
         if resolvedId != placeholderId {
@@ -591,7 +595,21 @@ final class ServerViewModel: ObservableObject, Identifiable, ServerViewModelProt
         sessionSummaries.removeAll { $0.id == placeholderId }
         setSessionSummaries(sessionSummaries)
 
+        cacheDelegate?.clearCache(for: id, sessionId: placeholderId)
+        currentSessionViewModel?.removeCommands(for: id, sessionId: placeholderId)
         removeSessionViewModel(for: placeholderId)
+    }
+
+    private func migrateSessionRuntimeState(from placeholderId: String, to resolvedId: String) {
+        guard placeholderId != resolvedId else { return }
+
+        cacheDelegate?.migrateCache(serverId: id, from: placeholderId, to: resolvedId)
+        migrateSessionViewModel(from: placeholderId, to: resolvedId)
+
+        if let viewModel = sessionViewModels[resolvedId] {
+            viewModel.migrateSessionCommandsCache(for: id, from: placeholderId, to: resolvedId)
+            viewModel.migrateSessionModeCache(for: id, from: placeholderId, to: resolvedId)
+        }
     }
 
     // MARK: - Connection Management
@@ -613,11 +631,15 @@ final class ServerViewModel: ObservableObject, Identifiable, ServerViewModelProt
 
         // Load chat state through currentSessionViewModel
         if isNew {
-            currentSessionViewModel?.loadChatState(
-                serverId: self.id,
-                sessionId: id,
-                canLoadFromStorage: canLoadSession() == false
-            )
+            if hasInMemorySessionState(for: id) {
+                currentSessionViewModel?.setSessionContext(serverId: self.id, sessionId: id)
+            } else {
+                currentSessionViewModel?.loadChatState(
+                    serverId: self.id,
+                    sessionId: id,
+                    canLoadFromStorage: canLoadSession() == false
+                )
+            }
         } else {
             // Just update context for existing session
             currentSessionViewModel?.setSessionContext(serverId: self.id, sessionId: id)
@@ -722,6 +744,7 @@ final class ServerViewModel: ObservableObject, Identifiable, ServerViewModelProt
 
         // Also check if we have locally stored messages (for agents without session/load)
         let hasStoredMessages = !(storage?.fetchMessages(forSessionId: resolvedId, serverId: self.id).isEmpty ?? true)
+        let hasInMemoryState = hasInMemorySessionState(for: resolvedId)
 
         setActiveSession(resolvedId)
 
@@ -733,9 +756,15 @@ final class ServerViewModel: ObservableObject, Identifiable, ServerViewModelProt
             return
         }
 
+        if connectionManager.isSessionMaterialized(resolvedId) {
+            pendingSessionLoad = nil
+            lastLoadedSession = resolvedId
+            return
+        }
+
         // If `session/resume` is supported, we reattach on-demand as part of prompt preflight.
 
-        if hasCachedMessages || hasStoredMessages {
+        if hasCachedMessages || hasStoredMessages || hasInMemoryState {
             // Use cache or stored messages, no need to load from server
             lastLoadedSession = resolvedId
             pendingSessionLoad = nil
@@ -755,6 +784,11 @@ final class ServerViewModel: ObservableObject, Identifiable, ServerViewModelProt
         } else {
             pendingSessionLoad = nil
         }
+    }
+
+    private func hasInMemorySessionState(for sessionId: String) -> Bool {
+        guard let viewModel = sessionViewModels[sessionId] else { return false }
+        return !viewModel.chatMessages.isEmpty || viewModel.currentStreamingAssistantMessageId() != nil
     }
 
     /// Create a new session.
@@ -817,6 +851,28 @@ final class ServerViewModel: ObservableObject, Identifiable, ServerViewModelProt
             appendClosure("Creating new session...")
         } else {
             appendClosure("Prepared new session (will be created on first send)")
+        }
+    }
+
+    /// Update the working directory for the current pending session before it is materialized.
+    func updatePendingSessionWorkingDirectory(_ newValue: String) {
+        guard isPendingSession else { return }
+
+        let sanitized = sanitizeWorkingDirectory(newValue)
+        pendingLocalSessionCwds[sessionId] = sanitized
+
+        let newCwdAdded = rememberUsedWorkingDirectory(sanitized)
+        pendingLocalSessionNewCwds[sessionId] = (pendingLocalSessionNewCwds[sessionId] == true) || newCwdAdded
+
+        if let index = sessionSummaries.firstIndex(where: { $0.id == sessionId }) {
+            let existing = sessionSummaries[index]
+            sessionSummaries[index] = SessionSummary(
+                id: existing.id,
+                title: existing.title,
+                cwd: sanitized,
+                updatedAt: existing.updatedAt
+            )
+            setSessionSummaries(sessionSummaries)
         }
     }
 
@@ -1241,6 +1297,7 @@ extension ServerViewModel: ACPSessionEventDelegate {
 
     func sessionLoadDidComplete(serverId: UUID, sessionId: String) {
         // Track that this session was successfully loaded
+        connectionManager.markSessionMaterialized(sessionId)
         lastLoadedSession = sessionId
     }
 }
