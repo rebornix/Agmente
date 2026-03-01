@@ -1,7 +1,7 @@
 # Agmente UI Tests Guide
 
 ## Scope
-Simulator-driven UI tests, including opt-in Codex local E2E.
+Simulator-driven UI tests, including scenario-backed manual E2E and opt-in Codex local E2E.
 
 ## External Repo Paths
 - Use root `.agmente.paths` for machine-local ACP/Codex checkout locations when debugging upstream compatibility.
@@ -15,6 +15,7 @@ Simulator-driven UI tests, including opt-in Codex local E2E.
 
 ## Codex E2E Contract
 - E2E test is opt-in and environment-driven.
+- Scenario intent lives under `e2e/scenarios/codex/`; the env vars below are the UI-test harness contract, not the source of truth for scenario behavior.
 - Supported env keys:
   - `AGMENTE_E2E_CODEX_ENABLED`
   - `AGMENTE_E2E_CODEX_ENDPOINT`

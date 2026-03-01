@@ -1,4 +1,4 @@
 interface:
   display_name: "Codex Local CLI E2E"
   short_description: "Run Agmente E2E with local Codex CLI"
-  default_prompt: "Run Agmente Codex local CLI E2E against a real app-server endpoint, execute only the Codex UI test, report pass/fail and root cause, and always cleanup server and simulator app state."
+  default_prompt: "Run the repo scenario e2e/scenarios/codex/local-cli-smoke.md against a real Codex app-server endpoint, execute only the Codex UI test harness, report pass/fail and root cause, and always cleanup server and simulator app state."

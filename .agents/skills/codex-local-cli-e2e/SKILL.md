@@ -7,7 +7,7 @@ description: Run and debug Agmente iOS end-to-end tests against a real local Cod
 
 ## Overview
 
-Run Agmente's Codex UI E2E test against a real local `codex app-server`, collect actionable failure details, and always clean up simulator/app-server state.
+Run Agmente's Codex UI E2E test against a real local `codex app-server`, using the repo-owned scenario spec as the source of truth, collect actionable failure details, and always clean up simulator/app-server state.
 
 ## Workflow
 
@@ -16,7 +16,8 @@ Run Agmente's Codex UI E2E test against a real local `codex app-server`, collect
 - Decide run mode:
   - `existing server`: server already running.
   - `managed server`: start server with a provided command and stop it during cleanup.
-- Use the Agmente Codex E2E contract in `references/agmente-codex-e2e-contract.md`.
+- Read `e2e/scenarios/codex/local-cli-smoke.md`.
+- Use `references/agmente-codex-e2e-contract.md` only for the UI-test environment-variable harness contract.
 
 2. Start or verify server.
 - If `managed server`, start the command and wait until the endpoint port is reachable.

@@ -1,4 +1,9 @@
-# Agmente Codex E2E Contract
+# Agmente Codex UI Test Harness Contract
+
+Scenario source of truth:
+- `e2e/scenarios/codex/local-cli-smoke.md`
+
+This file documents only the environment-variable contract used by the existing UI test harness.
 
 ## Test Target
 

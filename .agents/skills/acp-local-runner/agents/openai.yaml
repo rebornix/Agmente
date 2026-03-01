@@ -1,0 +1,4 @@
+interface:
+  display_name: "ACP Local Runner"
+  short_description: "Run Agmente ACP E2E scenarios"
+  default_prompt: "Run the requested repo scenario from e2e/scenarios/acp against a real local ACP backend, capture pass/fail, root cause, logs, and screenshots, then clean up backend and simulator app state."

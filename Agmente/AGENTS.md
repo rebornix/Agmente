@@ -51,3 +51,4 @@ SwiftUI app layer and protocol routing logic:
 - `ViewModelSyncTests`
 - `ACPSessionViewModelTests` (when chat/session behavior changes)
 - Relevant `AgmenteUITests` coverage (when UI flow or accessibility IDs change)
+- Manual scenario: [`copilot-smoke.md`](/Users/lvpeng/Code/Agmente-oss/e2e/scenarios/acp/copilot-smoke.md) when changing ACP protocol adoption, ACP/Codex mode routing, add-server ACP defaults, `session/list` cwd fanout, fresh-session lifecycle, or reconnect/load behavior

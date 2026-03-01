@@ -9,6 +9,7 @@
   - `AppServerClient/AGENTS.md`
   - `AgmenteTests/AGENTS.md`
   - `AgmenteUITests/AGENTS.md`
+  - `e2e/AGENTS.md`
 - Root files should stay concise and link to nested docs instead of duplicating implementation detail.
 
 ## Documentation Update Policy
@@ -150,9 +151,23 @@ xcodebuild -project /path/to/Agmente-oss/Agmente.xcodeproj \
 
 ---
 
-## Testing with Xcode Build MCP
+## E2E Scenarios
 
-The app can be tested in the iOS Simulator using the Xcode Build MCP tools. This section serves as a **testing specification** for verifying new changes and features.
+- Repository-owned E2E specs live under `e2e/`.
+- Start with `e2e/README.md`, then read:
+  - `e2e/AGENTS.md`
+  - `e2e/schema/scenario-frontmatter.md`
+  - `e2e/backends/`
+- `e2e/scenarios/`
+- Scenarios define what to test.
+- Skills in `.agents/skills/` are optional execution helpers and must not be the source of truth for scenario behavior.
+- When a user asks to run an E2E scenario, resolve the request from `e2e/scenarios/` first.
+- `run`, `execute`, `validate`, and `reproduce` scenario requests mean execute-only, no repository edits.
+- Agentic testing means the agent should actually launch the backend, drive the simulator or protocol tools, capture evidence, evaluate assertions, and clean up.
+- If an execute-only run is blocked by missing hooks or incomplete automation affordances, report the blocker and stop.
+- Only edit code, tests, skills, or docs when the user explicitly asks to fix, stabilize, or make the scenario executable.
+
+## Simulator Automation Guardrails
 
 ### Prerequisites
 - Xcode installed with iOS Simulator
@@ -184,7 +199,9 @@ Use these rules for every simulator automation run to avoid wrong taps and wrong
 6. **Do not continue after ambiguous state.** If UI elements overlap (e.g. warning sheet over form) or expected controls are duplicated, stop and re-read hierarchy before proceeding.
 7. **Record key checkpoints in logs.** For E2E runs, capture and verify event progression (initialize, thread start/resume, turn start, turn completed) before declaring success.
 
-### Testing Scenarios Checklist
+### Generic Coverage Checklist
+
+Scenario-specific behavior now belongs under `e2e/scenarios/`. The checklist below is only a broad regression sweep.
 
 #### ✅ Server Connection Tests
 | Test | Steps | Expected Result |
