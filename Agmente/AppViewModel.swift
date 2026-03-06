@@ -287,6 +287,10 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
 
     private let storage: SessionStorage
 
+    private func startupLog(_ message: String) {
+        print("[APP][STARTUP] \(message)")
+    }
+
     init(
         storage: SessionStorage = .shared,
         defaults: UserDefaults = .standard,
@@ -337,7 +341,12 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
         self.connectionManager.delegate = self
         // Phase 1: Delegates are now set per session view model in createSessionViewModel()
 
+        startupLog(
+            "init servers=\(servers.count) selectedServerId=\(selectedServerId?.uuidString ?? "nil") shouldConnectOnStartup=\(shouldConnectOnStartup)"
+        )
+
         if shouldConnectOnStartup {
+            startupLog("init invoking connectInitializeAndFetchSessions()")
             connectInitializeAndFetchSessions()
         }
     }
@@ -526,6 +535,9 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
     }
 
     private func connectInitializeAndFetchSessions() {
+        startupLog(
+            "connectInitializeAndFetchSessions selectedServerId=\(selectedServerId?.uuidString ?? "nil") connectionState=\(connectionState)"
+        )
         serverLifecycleController.connectInitializeAndFetchSessions(
             selectedServerIdProvider: { [weak self] in self?.selectedServerId },
             isInitializedOnConnection: { [weak self] in self?.isInitializedOnConnection ?? false },
@@ -1059,8 +1071,10 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
         if let savedId = defaults.string(forKey: lastServerKey),
            let uuid = UUID(uuidString: savedId),
            servers.contains(where: { $0.id == uuid }) {
+            startupLog("restoreSelectionFromDefaults using saved serverId=\(uuid.uuidString)")
             selectServer(uuid)
         } else {
+            startupLog("restoreSelectionFromDefaults falling back to first serverId=\(firstServer.id.uuidString)")
             selectServer(firstServer.id)
         }
     }
@@ -1535,6 +1549,9 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
         } else {
             connectionManager.shouldAutoInitialize = false
         }
+        startupLog(
+            "connect endpoint=\(url.absoluteString) selectedServerId=\(selectedServerId?.uuidString ?? "nil") autoInitialize=\(connectionManager.shouldAutoInitialize)"
+        )
         connectionManager.connect(config: config, completion: completion)
     }
 
@@ -1600,6 +1617,9 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
         } else {
             connectionManager.shouldAutoInitialize = false
         }
+        startupLog(
+            "connectAndWait endpoint=\(url.absoluteString) selectedServerId=\(selectedServerId?.uuidString ?? "nil") autoInitialize=\(connectionManager.shouldAutoInitialize) networkAvailable=\(isNetworkAvailable)"
+        )
         return await connectionManager.connectAndWait(config: config)
     }
 
@@ -1743,6 +1763,9 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
 
     func fetchSessionList(force: Bool = false) {
         // Phase 2: Delegate to ServerViewModel
+        startupLog(
+            "fetchSessionList force=\(force) selectedServerId=\(selectedServerId?.uuidString ?? "nil") connectionState=\(connectionState)"
+        )
         selectedServerViewModelAny?.fetchSessionList(force: force)
     }
 

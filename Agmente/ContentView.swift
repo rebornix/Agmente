@@ -15,6 +15,10 @@ struct ContentView: View {
     @State private var previousServerId: UUID?
     @Environment(\.scenePhase) private var scenePhase
 
+    private func startupLog(_ message: String) {
+        print("[APP][STARTUP] \(message)")
+    }
+
     @ViewBuilder
     private var containerView: some View {
 #if os(macOS)
@@ -45,6 +49,7 @@ struct ContentView: View {
         .sheet(item: $serverToEdit, content: editServerSheet)
         .sheet(isPresented: $showingSettings, content: settingsSheet)
         .onChange(of: scenePhase) { _, newPhase in
+            startupLog("scenePhase changed to \(String(describing: newPhase))")
             if newPhase == .active {
                 model.resumeConnectionIfNeeded()
             }
@@ -103,6 +108,9 @@ struct ContentView: View {
 #endif
         }
         .onAppear {
+            startupLog(
+                "ContentView.onAppear selectedServerId=\(model.selectedServerId?.uuidString ?? "nil") sessionId=\(model.serverSessionId)"
+            )
 #if os(macOS)
             let sessionId = model.serverSessionId
             if !sessionId.isEmpty {
@@ -425,6 +433,10 @@ private struct SessionListPage: View {
         return formatter
     }()
 
+    private func startupLog(_ message: String) {
+        print("[APP][STARTUP] \(message)")
+    }
+
     private var activeSessions: [SessionSummary] {
         // Only show as active if the session is actually streaming (agent is responding)
         guard model.serverIsStreaming,
@@ -738,7 +750,15 @@ private struct SessionListPage: View {
 #endif
         }
         .onAppear {
-            if model.connectionState == .disconnected && !model.isConnecting {
+            startupLog(
+                "SessionListPage.onAppear connectionState=\(model.connectionState) isConnecting=\(model.isConnecting) selectedServerId=\(model.selectedServerId?.uuidString ?? "nil") isInitialAppLaunch=\(model.isInitialAppLaunch)"
+            )
+            // AppViewModel init already schedules the initial cold-launch connection.
+            // Skip the view-level auto-connect on first appearance to avoid opening
+            // a second socket before the startup task marks the manager as connecting.
+            if !model.isInitialAppLaunch,
+               model.connectionState == .disconnected,
+               !model.isConnecting {
                 model.connect()
             }
         }

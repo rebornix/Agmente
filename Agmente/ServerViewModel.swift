@@ -140,6 +140,10 @@ final class ServerViewModel: ObservableObject, Identifiable, ServerViewModelProt
     private var pendingNewSessionPlaceholderId: String?
     private var pendingMultiCwdFetch: (remaining: Int, sessions: [SessionSummary])?
 
+    private func startupLog(_ message: String) {
+        print("[APP][STARTUP] \(message)")
+    }
+
     // MARK: - Initialization
 
     init(
@@ -933,7 +937,11 @@ final class ServerViewModel: ObservableObject, Identifiable, ServerViewModelProt
 
     /// Fetch session list from server.
     func fetchSessionList(force: Bool = false) {
-        guard canFetchSessionList(force: force) else {
+        let canFetch = canFetchSessionList(force: force)
+        startupLog(
+            "ServerViewModel.fetchSessionList serverId=\(id.uuidString) force=\(force) canFetch=\(canFetch) connectionState=\(connectionState) isInitialized=\(isInitialized)"
+        )
+        guard canFetch else {
             loadCachedSessions()
             return
         }
@@ -951,6 +959,9 @@ final class ServerViewModel: ObservableObject, Identifiable, ServerViewModelProt
         Task { @MainActor in
             do {
                 let payload = ACPSessionListPayload(workingDirectory: effectiveWorkingDirectory(resolvedWorkingDirectory))
+                self.startupLog(
+                    "ServerViewModel.sendSessionList serverId=\(self.id.uuidString) cwd=\(payload.workingDirectory ?? "nil")"
+                )
                 _ = try await service.listSessions(payload)
             } catch {
                 appendClosure("Failed to fetch sessions: \(error)")
@@ -961,7 +972,10 @@ final class ServerViewModel: ObservableObject, Identifiable, ServerViewModelProt
     /// Send session/list for all working directories.
     private func sendSessionListForAllWorkingDirectories(service: ACPService) {
         // Guard against duplicate fetches
-        guard pendingMultiCwdFetch == nil else { return }
+        guard pendingMultiCwdFetch == nil else {
+            startupLog("ServerViewModel.sendSessionListForAllWorkingDirectories already pending serverId=\(id.uuidString)")
+            return
+        }
 
         guard let storage = storage else {
             sendSessionList(service: service)
@@ -979,6 +993,9 @@ final class ServerViewModel: ObservableObject, Identifiable, ServerViewModelProt
             return
         }
 
+        startupLog(
+            "ServerViewModel.sendSessionListForAllWorkingDirectories serverId=\(id.uuidString) cwds=\(effectiveCwds.joined(separator: " | "))"
+        )
         appendClosure("Fetching sessions for \(effectiveCwds.count) working director\(effectiveCwds.count == 1 ? "y" : "ies")...")
         pendingMultiCwdFetch = (remaining: effectiveCwds.count, sessions: [])
 
@@ -999,6 +1016,9 @@ final class ServerViewModel: ObservableObject, Identifiable, ServerViewModelProt
 
     /// Handle session/list response in multi-CWD fetch mode.
     func handleSessionListResult(_ sessions: [SessionSummary]) {
+        startupLog(
+            "ServerViewModel.handleSessionListResult serverId=\(id.uuidString) sessions=\(sessions.count) pendingRemaining=\(pendingMultiCwdFetch?.remaining ?? 0)"
+        )
         guard var pending = pendingMultiCwdFetch else {
             // Not in multi-CWD mode, update directly
             // Only update if server supports session/list, otherwise keep cached sessions
