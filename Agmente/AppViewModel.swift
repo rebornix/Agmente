@@ -228,6 +228,7 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
     private let highPerformanceRendererKey = "Agmente.useHighPerformanceChatRenderer"
     private let codexPermissionPresetPrefix = "Agmente.codexPermissionPreset."
     private let serverLifecycleController: ServerLifecycleController
+    private var isApplyingSelectedServerConfig = false
 
     private func debugLog(_ message: String) {
         guard devModeEnabled else { return }
@@ -897,12 +898,7 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
         connectionManager.shouldAutoInitialize = initializedServers.contains(id)
 
         guard let server = servers.first(where: { $0.id == id }) else { return }
-        scheme = server.scheme
-        endpointHost = server.host
-        token = server.token
-        cfAccessClientId = server.cfAccessClientId
-        cfAccessClientSecret = server.cfAccessClientSecret
-        workingDirectory = server.workingDirectory
+        applySelectedServerConfig(server)
 
         applyCachedState(for: id)
         refreshImageAttachmentSupport(for: id)
@@ -1004,6 +1000,7 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
     }
 
     private func persistActiveServerConfig() {
+        guard !isApplyingSelectedServerConfig else { return }
         guard let serverId = selectedServerId,
               let index = servers.firstIndex(where: { $0.id == serverId }) else { return }
         let normalized = normalizeEndpointInput(scheme: scheme, host: endpointHost)
@@ -1032,6 +1029,18 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
 
         // Persist to Core Data
         serverLifecycleController.persistServer(servers[index])
+    }
+
+    private func applySelectedServerConfig(_ server: ACPServerConfiguration) {
+        isApplyingSelectedServerConfig = true
+        defer { isApplyingSelectedServerConfig = false }
+
+        scheme = server.scheme
+        endpointHost = server.host
+        token = server.token
+        cfAccessClientId = server.cfAccessClientId
+        cfAccessClientSecret = server.cfAccessClientSecret
+        workingDirectory = server.workingDirectory
     }
 
     private func persistCurrentServerState() {

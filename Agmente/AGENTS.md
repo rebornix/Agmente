@@ -20,6 +20,7 @@ SwiftUI app layer and protocol routing logic:
 - `AppViewModel` owns one server view model per server ID.
 - ACP and Codex paths must remain protocol-isolated.
 - UI should consume unified protocol (`ServerViewModelProtocol`) where possible.
+- Selecting a different server must not persist the previously selected server's endpoint/token/cwd into the new server while rebinding published connection fields; apply stored config non-destructively, then reconnect.
 - Session/thread summaries should preserve server metadata (`cwd`, timestamps) when available.
 - ACP placeholder-session resolution must be non-destructive: when `session/new` returns a real session ID, preserve the in-memory user/assistant transcript, treat the new session as already materialized for the current connection, and avoid issuing a follow-up `session/load` if richer local state already exists or the fresh session is still empty.
 - Codex reconnect/resume must be non-destructive for active sessions: prefer richer in-memory chat/tool-call state when `thread/resume` is incomplete, and restore streaming/stop state from active turn status.

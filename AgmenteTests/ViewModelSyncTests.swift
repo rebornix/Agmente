@@ -38,6 +38,25 @@ final class ViewModelSyncTests: XCTestCase {
         )
     }
 
+    private func addServer(
+        to model: AppViewModel,
+        name: String,
+        host: String,
+        workingDirectory: String = "/",
+        agentInfo: AgentProfile? = nil
+    ) {
+        model.addServer(
+            name: name,
+            scheme: "ws",
+            host: host,
+            token: "",
+            cfAccessClientId: "",
+            cfAccessClientSecret: "",
+            workingDirectory: workingDirectory,
+            agentInfo: agentInfo
+        )
+    }
+
     private func makeService() -> ACPService {
         let url = URL(string: "ws://localhost:1234")!
         let config = ACPClientConfiguration(endpoint: url, pingInterval: nil)
@@ -322,5 +341,26 @@ final class ViewModelSyncTests: XCTestCase {
         let updatedSession = serverVM?.sessionSummaries.first
         XCTAssertEqual(updatedSession?.updatedAt, originalDate,
                        "Session timestamp should be preserved when only updating CWD")
+    }
+
+    func testSelectServerDoesNotOverwriteSelectedServerConnectionDetails() throws {
+        let model = makeModel()
+        addServer(to: model, name: "Server A", host: "localhost:1111", workingDirectory: "/tmp/a")
+        let firstServerId = try XCTUnwrap(model.selectedServerId)
+
+        addServer(to: model, name: "Server B", host: "localhost:2222", workingDirectory: "/tmp/b")
+        let secondServerId = try XCTUnwrap(model.selectedServerId)
+
+        XCTAssertNotEqual(firstServerId, secondServerId)
+        XCTAssertEqual(model.selectedServer?.host, "localhost:2222")
+        XCTAssertEqual(model.selectedServer?.workingDirectory, "/tmp/b")
+
+        model.selectServer(firstServerId)
+        XCTAssertEqual(model.selectedServer?.host, "localhost:1111")
+        XCTAssertEqual(model.selectedServer?.workingDirectory, "/tmp/a")
+
+        model.selectServer(secondServerId)
+        XCTAssertEqual(model.selectedServer?.host, "localhost:2222")
+        XCTAssertEqual(model.selectedServer?.workingDirectory, "/tmp/b")
     }
 }
