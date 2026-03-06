@@ -1397,12 +1397,16 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
 
     /// Persist chat messages to Core Data for a session.
     func persistChatToStorage(serverId: UUID, sessionId: String) {
-        // Only persist for agents without session/load support
-        guard canLoadSession(for: serverId) == false else { return }
-
         // Only persist non-streaming, completed messages
         let messagesToStore = sessionViewModel?.chatMessages.filter { !$0.isStreaming } ?? []
         guard !messagesToStore.isEmpty else { return }
+
+        let title = (sessionSummaryCache[serverId] ?? sessionSummaries).first(where: { $0.id == sessionId })?.title
+        let cwd = (sessionSummaryCache[serverId] ?? sessionSummaries).first(where: { $0.id == sessionId })?.cwd
+        storage.saveSession(
+            StoredSessionInfo(sessionId: sessionId, title: title, cwd: cwd, updatedAt: nil),
+            forServerId: serverId
+        )
 
         let storedMessages = messagesToStore.map { $0.toStoredInfo() }
         storage.saveMessages(storedMessages, forSessionId: sessionId, serverId: serverId)

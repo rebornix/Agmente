@@ -434,7 +434,7 @@ final class ServerViewModel: ObservableObject, Identifiable, ServerViewModelProt
 
     /// Persist sessions to storage.
     private func persistSessionsToStorage() {
-        let sessions = sessionSummaries
+        let sessions = sessionSummaries.filter { !pendingLocalSessions.contains($0.id) }
         guard !sessions.isEmpty || sessionListSupportFlag() == true else { return }
 
         for session in sessions {
@@ -580,6 +580,8 @@ final class ServerViewModel: ObservableObject, Identifiable, ServerViewModelProt
 
     /// Remove placeholder session after resolution.
     private func removePlaceholderSession(_ placeholderId: String, replacedBy resolvedId: String?) {
+        let wasActivePlaceholder = (sessionId == placeholderId) || (selectedSessionId == placeholderId)
+
         if let resolvedId, resolvedId != placeholderId {
             // Delete placeholder session from storage if it exists (edge case protection)
             storage?.deleteSession(sessionId: placeholderId, forServerId: id)
@@ -596,6 +598,11 @@ final class ServerViewModel: ObservableObject, Identifiable, ServerViewModelProt
             pendingSessionLoad = nil
         }
 
+        if wasActivePlaceholder, resolvedId == nil {
+            sessionId = ""
+            selectedSessionId = nil
+        }
+
         sessionSummaries.removeAll { $0.id == placeholderId }
         setSessionSummaries(sessionSummaries)
 
@@ -608,11 +615,38 @@ final class ServerViewModel: ObservableObject, Identifiable, ServerViewModelProt
         guard placeholderId != resolvedId else { return }
 
         cacheDelegate?.migrateCache(serverId: id, from: placeholderId, to: resolvedId)
+        migrateSessionStorageState(from: placeholderId, to: resolvedId)
         migrateSessionViewModel(from: placeholderId, to: resolvedId)
 
         if let viewModel = sessionViewModels[resolvedId] {
             viewModel.migrateSessionCommandsCache(for: id, from: placeholderId, to: resolvedId)
             viewModel.migrateSessionModeCache(for: id, from: placeholderId, to: resolvedId)
+        }
+    }
+
+    private func migrateSessionStorageState(from placeholderId: String, to resolvedId: String) {
+        guard let storage else { return }
+
+        if let placeholderSession = storage.fetchSessions(forServerId: id).first(where: { $0.sessionId == placeholderId }) {
+            storage.saveSession(
+                StoredSessionInfo(
+                    sessionId: resolvedId,
+                    title: placeholderSession.title,
+                    cwd: placeholderSession.cwd,
+                    updatedAt: placeholderSession.updatedAt
+                ),
+                forServerId: id
+            )
+        } else {
+            storage.saveSession(
+                StoredSessionInfo(sessionId: resolvedId, title: nil, cwd: nil, updatedAt: nil),
+                forServerId: id
+            )
+        }
+
+        let messages = storage.fetchMessages(forSessionId: placeholderId, serverId: id)
+        if !messages.isEmpty {
+            storage.saveMessages(messages, forSessionId: resolvedId, serverId: id)
         }
     }
 
@@ -641,7 +675,7 @@ final class ServerViewModel: ObservableObject, Identifiable, ServerViewModelProt
                 currentSessionViewModel?.loadChatState(
                     serverId: self.id,
                     sessionId: id,
-                    canLoadFromStorage: canLoadSession() == false
+                    canLoadFromStorage: true
                 )
             }
         } else {
@@ -725,6 +759,18 @@ final class ServerViewModel: ObservableObject, Identifiable, ServerViewModelProt
             do {
                 _ = try await service.loadSession(payload)
             } catch {
+                if case ACPServiceError.rpc(_, let rpcError) = error, rpcError.code == -32601 {
+                    if var info = agentInfo {
+                        info.capabilities.loadSession = false
+                        agentInfo = info
+                    }
+                    appendClosure("session/load disabled for this agent (Method not found)")
+                }
+                currentSessionViewModel?.loadChatState(
+                    serverId: self.id,
+                    sessionId: sessionIdToLoad,
+                    canLoadFromStorage: true
+                )
                 appendClosure("Failed to load session: \(error)")
             }
         }
@@ -1204,6 +1250,12 @@ final class ServerViewModel: ObservableObject, Identifiable, ServerViewModelProt
                         return
                     }
                 }
+            }
+
+            if pendingLocalSessions.contains(sessionId) {
+                appendClosure("Session creation still pending; aborting prompt")
+                failPendingTurn("Session creation failed")
+                return
             }
 
             guard !sessionId.isEmpty else {
