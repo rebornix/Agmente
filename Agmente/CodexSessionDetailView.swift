@@ -21,6 +21,9 @@ struct CodexSessionDetailView: View {
     @State private var composerHeight: CGFloat = 0
     @State private var scrollToBottomAction: (() -> Void)?
     @State private var scrollPosition: UUID?
+    @State private var isExportingLogs = false
+    @State private var exportedLogURL: URL?
+    @State private var exportError: String?
 
     private struct FileChangesReviewPayload: Identifiable {
         let id = UUID()
@@ -152,9 +155,16 @@ struct CodexSessionDetailView: View {
                 serverViewModel.respondToUserInputRequest(requestId: requestId, answers: answers)
             }
         }
+        .sheet(isPresented: Binding(
+            get: { exportedLogURL != nil },
+            set: { if !$0 { exportedLogURL = nil } }
+        )) {
+            if let url = exportedLogURL {
+                CodexSessionLogShareSheet(activityItems: [url])
+            }
+        }
         .toolbar {
-            if !serverViewModel.sessionId.isEmpty,
-               model.canArchiveSessions || model.canDeleteSessionsLocally {
+            if !serverViewModel.sessionId.isEmpty {
                 let placement: ToolbarItemPlacement = {
 #if os(macOS)
                     .primaryAction
@@ -164,6 +174,16 @@ struct CodexSessionDetailView: View {
                 }()
                 ToolbarItem(placement: placement) {
                     Menu {
+                        Button {
+                            exportCurrentSessionLogs()
+                        } label: {
+                            if isExportingLogs {
+                                Label("Preparing Logs…", systemImage: "clock.arrow.circlepath")
+                            } else {
+                                Label("Share Session Logs", systemImage: "square.and.arrow.up")
+                            }
+                        }
+                        .disabled(isExportingLogs)
                         if model.canArchiveSessions {
                             Button(role: .destructive) {
                                 showArchiveSessionConfirm = true
@@ -216,6 +236,17 @@ struct CodexSessionDetailView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text("Agmente can't undo file changes yet.")
+        }
+        .alert(
+            "Log Export Failed",
+            isPresented: Binding(
+                get: { exportError != nil },
+                set: { if !$0 { exportError = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(exportError ?? "Unknown error")
         }
     }
 }
@@ -1315,4 +1346,108 @@ private extension CodexSessionDetailView {
             return .primary
         }
     }
+
+    func exportCurrentSessionLogs() {
+        let sessionId = serverViewModel.sessionId
+        guard !sessionId.isEmpty else {
+            exportError = "No active session selected."
+            return
+        }
+
+        isExportingLogs = true
+        exportError = nil
+        let logger = model.codexSessionLoggerForExport
+
+        Task.detached {
+            let logFiles = logger.collectLogFileURLs(sessionId: sessionId)
+            guard !logFiles.isEmpty else {
+                await MainActor.run {
+                    isExportingLogs = false
+                    exportError = "No logs found for this session."
+                }
+                return
+            }
+
+            if logFiles.count == 1, let onlyFile = logFiles.first {
+                await MainActor.run {
+                    isExportingLogs = false
+                    exportedLogURL = onlyFile
+                }
+                return
+            }
+
+            let tempDir = FileManager.default.temporaryDirectory
+            let formatter = DateFormatter()
+            formatter.dateFormat = "yyyyMMdd-HHmmss"
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            let timestamp = formatter.string(from: Date())
+            let zipName = "codex-session-\(sessionId)-\(timestamp).zip"
+            let zipURL = tempDir.appendingPathComponent(zipName)
+
+            try? FileManager.default.removeItem(at: zipURL)
+            let stagingDir = tempDir.appendingPathComponent("codex-session-logs-\(sessionId)-\(timestamp)")
+            try? FileManager.default.removeItem(at: stagingDir)
+            try? FileManager.default.createDirectory(at: stagingDir, withIntermediateDirectories: true)
+
+            for logFile in logFiles {
+                let destination = stagingDir.appendingPathComponent(logFile.lastPathComponent)
+                try? FileManager.default.copyItem(at: logFile, to: destination)
+            }
+
+            var coordinationError: NSError?
+            let coordinator = NSFileCoordinator()
+            var resultURL: URL?
+            coordinator.coordinate(
+                readingItemAt: stagingDir,
+                options: .forUploading,
+                error: &coordinationError
+            ) { zippedURL in
+                let finalURL = tempDir.appendingPathComponent(zipName)
+                try? FileManager.default.removeItem(at: finalURL)
+                try? FileManager.default.copyItem(at: zippedURL, to: finalURL)
+                resultURL = finalURL
+            }
+
+            try? FileManager.default.removeItem(at: stagingDir)
+
+            await MainActor.run {
+                isExportingLogs = false
+                if let resultURL {
+                    exportedLogURL = resultURL
+                } else {
+                    exportError = coordinationError?.localizedDescription ?? "Failed to create log archive."
+                }
+            }
+        }
+    }
 }
+
+#if os(iOS)
+private struct CodexSessionLogShareSheet: UIViewControllerRepresentable {
+    let activityItems: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+#else
+private struct CodexSessionLogShareSheet: View {
+    let activityItems: [Any]
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Text("Log file exported")
+                .font(.headline)
+            if let url = activityItems.first as? URL {
+                Text(url.lastPathComponent)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding()
+        .frame(minWidth: 300, minHeight: 120)
+    }
+}
+#endif

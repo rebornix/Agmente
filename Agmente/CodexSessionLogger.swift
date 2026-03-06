@@ -85,13 +85,6 @@ actor CodexSessionLogger {
         return formatter
     }()
 
-    private let filenameFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyyMMdd-HHmmss"
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        return formatter
-    }()
-
     nonisolated let logDirectoryURL: URL
     private let maxFiles: Int
     private(set) var logLevel: LogLevel
@@ -100,7 +93,7 @@ actor CodexSessionLogger {
     private var fileHandle: FileHandle?
 
     init(maxFiles: Int = 5, logLevel: LogLevel = .verbose) {
-        self.maxFiles = maxFiles
+        self.maxFiles = max(maxFiles, 10)
         self.logLevel = logLevel
         let base = (try? FileManager.default.url(
             for: .applicationSupportDirectory,
@@ -123,18 +116,39 @@ actor CodexSessionLogger {
         ensureDirectoryExists()
         pruneOldLogs()
 
-        let sanitizedId = sanitizeFilename(sessionId)
-        let timestamp = filenameFormatter.string(from: Date())
-        let filename = "codex-session-\(sanitizedId)-\(timestamp).jsonl"
-        let url = logDirectoryURL.appendingPathComponent(filename)
-        FileManager.default.createFile(atPath: url.path, contents: nil)
+        let url = logFileURL(for: sessionId)
+        let didCreate = ensureFileExists(at: url)
         fileHandle = try? FileHandle(forWritingTo: url)
         currentSessionId = sessionId
         currentFileURL = url
 
+        if didCreate {
+            write(Entry(
+                ts: timestampString(),
+                type: "session_start",
+                sessionId: sessionId,
+                turnId: nil,
+                itemId: nil,
+                direction: nil,
+                method: nil,
+                message: nil,
+                title: nil,
+                kind: nil,
+                status: nil,
+                output: nil,
+                path: nil,
+                changeType: nil,
+                diff: nil,
+                command: nil,
+                cwd: cwd,
+                endpoint: endpoint
+            ))
+        }
+
+        // Mark each explicit session open while reusing the same per-session file.
         write(Entry(
             ts: timestampString(),
-            type: "session_start",
+            type: "session_open",
             sessionId: sessionId,
             turnId: nil,
             itemId: nil,
@@ -446,19 +460,34 @@ actor CodexSessionLogger {
     // MARK: - Log File Collection (for export)
 
     /// Returns URLs of all JSONL log files sorted newest-first.
-    nonisolated func collectLogFileURLs() -> [URL] {
-        let keys: [URLResourceKey] = [.creationDateKey]
+    nonisolated func collectLogFileURLs(sessionId: String? = nil) -> [URL] {
+        let keys: [URLResourceKey] = [.contentModificationDateKey, .creationDateKey]
         guard let files = try? FileManager.default.contentsOfDirectory(
             at: logDirectoryURL,
             includingPropertiesForKeys: keys,
             options: [.skipsHiddenFiles]
         ) else { return [] }
-        let logFiles = files.filter {
+        let allLogFiles = files.filter {
             $0.lastPathComponent.hasPrefix("codex-session-") && $0.pathExtension == "jsonl"
         }
+        let logFiles: [URL]
+        if let sessionId, !sessionId.isEmpty {
+            let sanitized = sanitizeFilename(sessionId)
+            let exactFilename = "codex-session-\(sanitized).jsonl"
+            let legacyPrefix = "codex-session-\(sanitized)-"
+            logFiles = allLogFiles.filter { url in
+                let name = url.lastPathComponent
+                return name == exactFilename || name.hasPrefix(legacyPrefix)
+            }
+        } else {
+            logFiles = allLogFiles
+        }
+
         return logFiles.sorted { lhs, rhs in
-            let lhsDate = (try? lhs.resourceValues(forKeys: Set(keys)).creationDate) ?? .distantPast
-            let rhsDate = (try? rhs.resourceValues(forKeys: Set(keys)).creationDate) ?? .distantPast
+            let lhsValues = try? lhs.resourceValues(forKeys: Set(keys))
+            let rhsValues = try? rhs.resourceValues(forKeys: Set(keys))
+            let lhsDate = lhsValues?.contentModificationDate ?? lhsValues?.creationDate ?? .distantPast
+            let rhsDate = rhsValues?.contentModificationDate ?? rhsValues?.creationDate ?? .distantPast
             return lhsDate > rhsDate
         }
     }
@@ -500,6 +529,7 @@ actor CodexSessionLogger {
     }
 
     private func write(_ entry: Entry) {
+        guard prepareHandleIfNeeded(for: entry.sessionId) else { return }
         guard let fileHandle else { return }
         guard let data = try? encoder.encode(entry) else { return }
         var line = data
@@ -513,6 +543,7 @@ actor CodexSessionLogger {
     }
 
     private func writeDiagnostic(_ entry: DiagnosticEntry) {
+        guard prepareHandleIfNeeded(for: entry.sessionId) else { return }
         guard let fileHandle else { return }
         guard let data = try? encoder.encode(entry) else { return }
         var line = data
@@ -525,15 +556,50 @@ actor CodexSessionLogger {
         }
     }
 
+    @discardableResult
+    private func prepareHandleIfNeeded(for sessionId: String?) -> Bool {
+        guard let sessionId, !sessionId.isEmpty else {
+            return fileHandle != nil
+        }
+
+        if currentSessionId == sessionId, fileHandle != nil {
+            return true
+        }
+
+        closeFile()
+        ensureDirectoryExists()
+        pruneOldLogs()
+
+        let url = logFileURL(for: sessionId)
+        _ = ensureFileExists(at: url)
+        fileHandle = try? FileHandle(forWritingTo: url)
+        currentSessionId = sessionId
+        currentFileURL = url
+        return fileHandle != nil
+    }
+
     private func ensureDirectoryExists() {
         if !FileManager.default.fileExists(atPath: logDirectoryURL.path) {
             try? FileManager.default.createDirectory(at: logDirectoryURL, withIntermediateDirectories: true)
         }
     }
 
+    private func logFileURL(for sessionId: String) -> URL {
+        let sanitizedId = sanitizeFilename(sessionId)
+        return logDirectoryURL.appendingPathComponent("codex-session-\(sanitizedId).jsonl")
+    }
+
+    @discardableResult
+    private func ensureFileExists(at url: URL) -> Bool {
+        if FileManager.default.fileExists(atPath: url.path) {
+            return false
+        }
+        return FileManager.default.createFile(atPath: url.path, contents: nil)
+    }
+
     private func pruneOldLogs() {
         guard maxFiles > 0 else { return }
-        let keys: [URLResourceKey] = [.creationDateKey]
+        let keys: [URLResourceKey] = [.contentModificationDateKey, .creationDateKey]
         guard let files = try? FileManager.default.contentsOfDirectory(
             at: logDirectoryURL,
             includingPropertiesForKeys: keys,
@@ -543,8 +609,10 @@ actor CodexSessionLogger {
         if logFiles.count <= maxFiles { return }
 
         let sorted = logFiles.sorted { lhs, rhs in
-            let lhsDate = (try? lhs.resourceValues(forKeys: Set(keys)).creationDate) ?? .distantPast
-            let rhsDate = (try? rhs.resourceValues(forKeys: Set(keys)).creationDate) ?? .distantPast
+            let lhsValues = try? lhs.resourceValues(forKeys: Set(keys))
+            let rhsValues = try? rhs.resourceValues(forKeys: Set(keys))
+            let lhsDate = lhsValues?.contentModificationDate ?? lhsValues?.creationDate ?? .distantPast
+            let rhsDate = rhsValues?.contentModificationDate ?? rhsValues?.creationDate ?? .distantPast
             return lhsDate > rhsDate
         }
 
@@ -557,7 +625,7 @@ actor CodexSessionLogger {
         isoFormatter.string(from: Date())
     }
 
-    private func sanitizeFilename(_ value: String) -> String {
+    nonisolated private func sanitizeFilename(_ value: String) -> String {
         let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
         let scalars = value.unicodeScalars.map { scalar -> Character in
             if allowed.contains(scalar) {
