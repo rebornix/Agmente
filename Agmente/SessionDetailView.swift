@@ -913,11 +913,11 @@ private extension SessionDetailView {
         return VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 10) {
                 Image(systemName: isAwaitingPermission ? "shield.lefthalf.filled" : iconName)
-                    .font(.footnote)
+                    .font(.system(size: 17, weight: .regular))
                     .foregroundStyle(isAwaitingPermission ? .orange : iconColor)
 
                 Text(displayContent)
-                    .font(.footnote.weight(.medium))
+                    .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(.primary)
                     .lineLimit(2)
 
@@ -926,7 +926,7 @@ private extension SessionDetailView {
                 // Show status indicator
                 if isAwaitingPermission {
                     Image(systemName: "exclamationmark.shield.fill")
-                        .font(.footnote)
+                        .font(.system(size: 18, weight: .regular))
                         .foregroundStyle(.orange)
                 } else if isStreaming && (status == nil || status == "in_progress" || status == "pending") {
                     ProgressView()
@@ -934,11 +934,11 @@ private extension SessionDetailView {
                         .scaleEffect(0.6)
                 } else if status == "completed" {
                     Image(systemName: "checkmark.circle.fill")
-                        .font(.footnote)
+                        .font(.system(size: 17, weight: .regular))
                         .foregroundStyle(.green)
                 } else if status == "failed" {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.footnote)
+                        .font(.system(size: 17, weight: .regular))
                         .foregroundStyle(.red)
                 }
             }
@@ -952,7 +952,7 @@ private extension SessionDetailView {
             if let output, !output.isEmpty {
                 let displayOutput = output.truncatedToolOutput(maxLines: 6, maxChars: 1_200)
                 Text(displayOutput)
-                    .font(.caption)
+                    .font(.system(size: 14, weight: .regular))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.top, 2)
@@ -972,7 +972,7 @@ private extension SessionDetailView {
     func permissionOptionsView(options: [ACPPermissionOption], requestId: ACP.ID) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Permission required")
-                .font(.caption.weight(.semibold))
+                .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.orange)
                 .padding(.top, 4)
             
@@ -983,9 +983,9 @@ private extension SessionDetailView {
                     } label: {
                         HStack(spacing: 4) {
                             Image(systemName: iconForPermissionKind(option.kind))
-                                .font(.caption2)
+                                .font(.system(size: 17, weight: .regular))
                             Text(option.name.truncatedLabel(maxChars: 24))
-                                .font(.caption.weight(.medium))
+                                .font(.system(size: 14, weight: .semibold))
                                 .lineLimit(1)
                                 .truncationMode(.tail)
                         }
@@ -1015,9 +1015,19 @@ private extension SessionDetailView {
     func backgroundForPermissionKind(_ kind: ACPPermissionOptionKind) -> Color {
         switch kind {
         case .allowOnce, .allowAlways:
-            return Color.green.opacity(0.15)
+            return Color(uiColor: UIColor { traitCollection in
+                if traitCollection.userInterfaceStyle == .dark {
+                    return UIColor(red: 44.0 / 255.0, green: 82.0 / 255.0, blue: 55.0 / 255.0, alpha: 1)
+                }
+                return UIColor(red: 210.0 / 255.0, green: 239.0 / 255.0, blue: 219.0 / 255.0, alpha: 1)
+            })
         case .rejectOnce, .rejectAlways:
-            return Color.red.opacity(0.15)
+            return Color(uiColor: UIColor { traitCollection in
+                if traitCollection.userInterfaceStyle == .dark {
+                    return UIColor(red: 92.0 / 255.0, green: 54.0 / 255.0, blue: 56.0 / 255.0, alpha: 1)
+                }
+                return UIColor(red: 245.0 / 255.0, green: 221.0 / 255.0, blue: 220.0 / 255.0, alpha: 1)
+            })
         case .unknown:
             return Color.gray.opacity(0.15)
         }
@@ -1026,9 +1036,19 @@ private extension SessionDetailView {
     func foregroundForPermissionKind(_ kind: ACPPermissionOptionKind) -> Color {
         switch kind {
         case .allowOnce, .allowAlways:
-            return .green
+            return Color(uiColor: UIColor { traitCollection in
+                if traitCollection.userInterfaceStyle == .dark {
+                    return UIColor(red: 92.0 / 255.0, green: 214.0 / 255.0, blue: 129.0 / 255.0, alpha: 1)
+                }
+                return UIColor(red: 38.0 / 255.0, green: 150.0 / 255.0, blue: 71.0 / 255.0, alpha: 1)
+            })
         case .rejectOnce, .rejectAlways:
-            return .red
+            return Color(uiColor: UIColor { traitCollection in
+                if traitCollection.userInterfaceStyle == .dark {
+                    return UIColor(red: 255.0 / 255.0, green: 109.0 / 255.0, blue: 107.0 / 255.0, alpha: 1)
+                }
+                return UIColor(red: 198.0 / 255.0, green: 46.0 / 255.0, blue: 56.0 / 255.0, alpha: 1)
+            })
         case .unknown:
             return .primary
         }

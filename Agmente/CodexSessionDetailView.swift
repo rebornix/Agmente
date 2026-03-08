@@ -252,6 +252,57 @@ struct CodexSessionDetailView: View {
 }
 
 private extension CodexSessionDetailView {
+    private enum ToolCallCardStyle {
+        static let background = Color(uiColor: UIColor { traitCollection in
+            if traitCollection.userInterfaceStyle == .dark {
+                return UIColor(red: 66.0 / 255.0, green: 48.0 / 255.0, blue: 42.0 / 255.0, alpha: 1)
+            }
+            return UIColor(red: 247.0 / 255.0, green: 235.0 / 255.0, blue: 228.0 / 255.0, alpha: 1)
+        })
+        static let hammer = Color(uiColor: UIColor { traitCollection in
+            if traitCollection.userInterfaceStyle == .dark {
+                return UIColor(red: 247.0 / 255.0, green: 163.0 / 255.0, blue: 109.0 / 255.0, alpha: 1)
+            }
+            return UIColor(red: 224.0 / 255.0, green: 123.0 / 255.0, blue: 65.0 / 255.0, alpha: 1)
+        })
+        static let warning = Color(uiColor: UIColor { traitCollection in
+            if traitCollection.userInterfaceStyle == .dark {
+                return UIColor(red: 255.0 / 255.0, green: 183.0 / 255.0, blue: 77.0 / 255.0, alpha: 1)
+            }
+            return UIColor(red: 235.0 / 255.0, green: 145.0 / 255.0, blue: 29.0 / 255.0, alpha: 1)
+        })
+        static let detail = Color(uiColor: UIColor { traitCollection in
+            if traitCollection.userInterfaceStyle == .dark {
+                return UIColor(red: 205.0 / 255.0, green: 190.0 / 255.0, blue: 183.0 / 255.0, alpha: 1)
+            }
+            return UIColor(red: 127.0 / 255.0, green: 110.0 / 255.0, blue: 100.0 / 255.0, alpha: 1)
+        })
+        static let approveForeground = Color(uiColor: UIColor { traitCollection in
+            if traitCollection.userInterfaceStyle == .dark {
+                return UIColor(red: 92.0 / 255.0, green: 214.0 / 255.0, blue: 129.0 / 255.0, alpha: 1)
+            }
+            return UIColor(red: 38.0 / 255.0, green: 150.0 / 255.0, blue: 71.0 / 255.0, alpha: 1)
+        })
+        static let approveBackground = Color(uiColor: UIColor { traitCollection in
+            if traitCollection.userInterfaceStyle == .dark {
+                return UIColor(red: 44.0 / 255.0, green: 82.0 / 255.0, blue: 55.0 / 255.0, alpha: 1)
+            }
+            return UIColor(red: 210.0 / 255.0, green: 239.0 / 255.0, blue: 219.0 / 255.0, alpha: 1)
+        })
+        static let declineForeground = Color(uiColor: UIColor { traitCollection in
+            if traitCollection.userInterfaceStyle == .dark {
+                return UIColor(red: 255.0 / 255.0, green: 109.0 / 255.0, blue: 107.0 / 255.0, alpha: 1)
+            }
+            return UIColor(red: 198.0 / 255.0, green: 46.0 / 255.0, blue: 56.0 / 255.0, alpha: 1)
+        })
+        static let declineBackground = Color(uiColor: UIColor { traitCollection in
+            if traitCollection.userInterfaceStyle == .dark {
+                return UIColor(red: 92.0 / 255.0, green: 54.0 / 255.0, blue: 56.0 / 255.0, alpha: 1)
+            }
+            return UIColor(red: 245.0 / 255.0, green: 221.0 / 255.0, blue: 220.0 / 255.0, alpha: 1)
+        })
+    }
+
     var chatTranscript: some View {
         ScrollViewReader { proxy in
             ScrollView {
@@ -1170,27 +1221,33 @@ private extension CodexSessionDetailView {
             && permissionOptions != nil
             && !(permissionOptions?.isEmpty ?? true)
 
-        return VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                Image(systemName: "hammer")
-                    .font(.footnote)
+        if usesCompactToolCallStyle(segment) {
+            return AnyView(compactToolCallRow(for: segment))
+        }
+
+        return AnyView(VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "hammer.fill")
+                    .font(.system(size: 17, weight: .regular))
                 Text(segment.toolCall?.title ?? segment.text)
-                    .font(.footnote.weight(.medium))
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(.primary)
+
+                Spacer(minLength: 6)
+
+                if isAwaitingApproval || isAwaitingPermission {
+                    Image(systemName: "exclamationmark.shield.fill")
+                        .font(.system(size: 18, weight: .regular))
+                        .foregroundStyle(ToolCallCardStyle.warning)
+                }
             }
-            .foregroundStyle(.orange)
+            .foregroundStyle(ToolCallCardStyle.hammer)
 
             if let output = segment.toolCall?.output, !output.isEmpty {
                 let displayOutput = output.truncatedToolOutput(maxLines: 5, maxChars: 1_200)
-                HStack(spacing: 6) {
-                    Image(systemName: "checkmark.circle")
-                        .font(.footnote)
-                    Text("Result")
-                        .font(.footnote.weight(.medium))
-                }
-                .foregroundStyle(.green)
                 Text(displayOutput)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 14, weight: .regular))
+                    .foregroundStyle(ToolCallCardStyle.detail)
             }
 
             if isAwaitingApproval {
@@ -1201,10 +1258,55 @@ private extension CodexSessionDetailView {
                 permissionOptionsView(options: options, requestId: requestId)
             }
         }
+        .padding(16)
+        .background(ToolCallCardStyle.background)
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous)))
+    }
+
+    func compactToolCallRow(for segment: AssistantSegment) -> some View {
+        let title = segment.toolCall?.title ?? segment.text
+        let lineCount = title
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .count
+        let isMultiline = lineCount > 1 || title.count > 72
+
+        return HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "hammer.fill")
+                .font(.system(size: 16, weight: .regular))
+                .foregroundStyle(ToolCallCardStyle.hammer)
+                .padding(.top, 2)
+
+            Text(title)
+                .font(compactToolCallTitleFont(for: segment))
+                .foregroundStyle(.primary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
         .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(Color.orange.opacity(0.1))
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .padding(.top, isMultiline ? 6 : 10)
+        .padding(.bottom, isMultiline ? 1 : 7)
+        .background(ToolCallCardStyle.background)
+        .clipShape(RoundedRectangle(cornerRadius: isMultiline ? 12 : 14, style: .continuous))
+    }
+
+    func usesCompactToolCallStyle(_ segment: AssistantSegment) -> Bool {
+        let hasOutput = !(segment.toolCall?.output?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+        let hasReason = !(segment.toolCall?.approvalReason?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+        let hasCommand = !(segment.toolCall?.approvalCommand?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+        let hasCwd = !(segment.toolCall?.approvalCwd?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+        let hasActions = segment.toolCall?.approvalRequestId != nil || !(segment.toolCall?.permissionOptions?.isEmpty ?? true)
+        return !hasOutput && !hasReason && !hasCommand && !hasCwd && !hasActions
+    }
+
+    func compactToolCallTitleFont(for segment: AssistantSegment) -> Font {
+        let title = segment.toolCall?.title ?? segment.text
+        let isLikelyMultiline = title.contains("\n") || title.count > 72
+        switch segment.toolCall?.kind?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "execute", "command", "shell":
+            return .system(size: isLikelyMultiline ? 14 : 15, weight: .medium, design: .monospaced)
+        default:
+            return .system(size: 15, weight: .medium)
+        }
     }
 
     @ViewBuilder
@@ -1213,105 +1315,96 @@ private extension CodexSessionDetailView {
         let command = segment.toolCall?.approvalCommand
         let cwd = segment.toolCall?.approvalCwd
 
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Permission required")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.orange)
-
+        VStack(alignment: .leading, spacing: 8) {
             if let reason, !reason.isEmpty {
-                Text(reason.truncatedLabel(maxChars: 160))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
+                Text("Reason: \(reason)")
+                    .font(.system(size: 14, weight: .regular))
+                    .foregroundStyle(ToolCallCardStyle.detail)
+                    .lineLimit(3)
             }
 
             if let command, !command.isEmpty {
-                Text(command.truncatedToolOutput(maxLines: 4, maxChars: 600))
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 6)
-                    .background(Color(.systemGray6))
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                Text("Command: \(command)")
+                    .font(.system(size: 14, weight: .regular))
+                    .foregroundStyle(ToolCallCardStyle.detail)
+                    .lineLimit(2)
             }
 
             if let cwd, !cwd.isEmpty {
-                Text("cwd: \(cwd)")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                Text("CWD: \(cwd)")
+                    .font(.system(size: 14, weight: .regular))
+                    .foregroundStyle(ToolCallCardStyle.detail)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
             }
 
             if let requestId = segment.toolCall?.approvalRequestId {
-                HStack(spacing: 8) {
-                    Button {
+                HStack(spacing: 10) {
+                    permissionActionButton(
+                        title: "Approve",
+                        icon: "checkmark.circle.fill",
+                        foreground: ToolCallCardStyle.approveForeground,
+                        background: ToolCallCardStyle.approveBackground
+                    ) {
                         serverViewModel.approveRequest(requestId: requestId)
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "checkmark.circle")
-                                .font(.caption2)
-                            Text("Approve")
-                                .font(.caption.weight(.medium))
-                        }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(Color.green.opacity(0.15))
-                        .foregroundStyle(.green)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
                     }
-                    .buttonStyle(.plain)
 
-                    Button {
+                    permissionActionButton(
+                        title: "Decline",
+                        icon: "xmark.circle.fill",
+                        foreground: ToolCallCardStyle.declineForeground,
+                        background: ToolCallCardStyle.declineBackground
+                    ) {
                         serverViewModel.declineRequest(requestId: requestId)
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "xmark.circle")
-                                .font(.caption2)
-                            Text("Decline")
-                                .font(.caption.weight(.medium))
-                        }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(Color.red.opacity(0.15))
-                        .foregroundStyle(.red)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
                     }
-                    .buttonStyle(.plain)
                 }
             }
         }
-        .padding(.top, 6)
+        .padding(.top, 2)
     }
 
+    @ViewBuilder
     func permissionOptionsView(options: [ACPPermissionOption], requestId: JSONRPCID) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Permission required")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.orange)
-
-            HStack(spacing: 8) {
-                ForEach(options, id: \.optionId) { option in
-                    Button {
-                        model.sendPermissionResponse(requestId: requestId, optionId: option.optionId)
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: iconForPermissionKind(option.kind))
-                                .font(.caption2)
-                            Text(option.name.truncatedLabel(maxChars: 24))
-                                .font(.caption.weight(.medium))
-                                .lineLimit(1)
-                                .truncationMode(.tail)
-                        }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(backgroundForPermissionKind(option.kind))
-                        .foregroundStyle(foregroundForPermissionKind(option.kind))
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                    }
-                    .buttonStyle(.plain)
+        let columns = [GridItem(.adaptive(minimum: 102), alignment: .leading)]
+        LazyVGrid(columns: columns, alignment: .leading, spacing: 10) {
+            ForEach(options, id: \.optionId) { option in
+                permissionActionButton(
+                    title: option.name.truncatedLabel(maxChars: 24),
+                    icon: iconForPermissionKind(option.kind),
+                    foreground: foregroundForPermissionKind(option.kind),
+                    background: backgroundForPermissionKind(option.kind)
+                ) {
+                    model.sendPermissionResponse(requestId: requestId, optionId: option.optionId)
                 }
             }
         }
-        .padding(.top, 6)
+        .padding(.top, 2)
+    }
+
+    @ViewBuilder
+    func permissionActionButton(
+        title: String,
+        icon: String,
+        foreground: Color,
+        background: Color,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                    .font(.system(size: 17, weight: .regular))
+                Text(title)
+                    .font(.system(size: 14, weight: .semibold))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(background)
+            .foregroundStyle(foreground)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+        .buttonStyle(.plain)
     }
 
     func iconForPermissionKind(_ kind: ACPPermissionOptionKind) -> String {
@@ -1328,20 +1421,20 @@ private extension CodexSessionDetailView {
     func backgroundForPermissionKind(_ kind: ACPPermissionOptionKind) -> Color {
         switch kind {
         case .allowOnce, .allowAlways:
-            return Color.green.opacity(0.15)
+            return ToolCallCardStyle.approveBackground
         case .rejectOnce, .rejectAlways:
-            return Color.red.opacity(0.15)
+            return ToolCallCardStyle.declineBackground
         case .unknown:
-            return Color.gray.opacity(0.15)
+            return Color(.systemGray5)
         }
     }
 
     func foregroundForPermissionKind(_ kind: ACPPermissionOptionKind) -> Color {
         switch kind {
         case .allowOnce, .allowAlways:
-            return .green
+            return ToolCallCardStyle.approveForeground
         case .rejectOnce, .rejectAlways:
-            return .red
+            return ToolCallCardStyle.declineForeground
         case .unknown:
             return .primary
         }
