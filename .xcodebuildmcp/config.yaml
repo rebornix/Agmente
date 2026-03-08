@@ -1,0 +1,18 @@
+schemaVersion: 1
+enabledWorkflows:
+  - simulator
+  - device
+  - logging
+  - project-discovery
+  - simulator-management
+  - swift-package
+  - ui-automation
+  - utilities
+debug: true
+sentryDisabled: true
+sessionDefaults:
+  projectPath: Agmente.xcodeproj
+  scheme: Agmente
+  simulatorName: iPhone 17 Pro Max
+  simulatorId: BE205EA8-B26C-44C2-B52B-B49141678273
+  simulatorPlatform: iOS Simulator
