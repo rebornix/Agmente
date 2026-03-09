@@ -225,6 +225,11 @@ private extension ContentView {
             }
         case .developerLogs:
             DeveloperLogsView(model: model)
+#if DEBUG && canImport(UIKit)
+        case .testTranscript:
+            ChatComponentGalleryView(initialMode: model.useHighPerformanceChatRenderer ? .highPerformance : .standard)
+                .navigationTitle("Test Transcript")
+#endif
         case .folderSessions(let path, let displayName):
             FolderSessionsView(
                 model: model,
@@ -371,6 +376,20 @@ private extension ContentView {
                 } label: {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
+
+                #if DEBUG && canImport(UIKit)
+                if model.devModeEnabled {
+                    Button {
+                        #if os(macOS)
+                        splitSelection = .testTranscript
+                        #else
+                        navigationPath.append(.testTranscript)
+                        #endif
+                    } label: {
+                        Label("Test Transcript", systemImage: "rectangle.on.rectangle.angled")
+                    }
+                }
+                #endif
 
                 Button(action: model.disconnect) {
                     Label("Disconnect", systemImage: "bolt.slash")
@@ -863,19 +882,36 @@ private struct SessionListPage: View {
                     // Show logs button when collapsed and dev mode enabled
                     if summaryCardCollapsed && model.devModeEnabled {
                         Spacer()
-                        
-                        Button {
-                            navigate(to: .developerLogs)
-                        } label: {
-                            HStack(spacing: 4) {
-                                Image(systemName: "doc.text")
-                                    .font(.caption2)
-                                Text("Logs")
-                                    .font(.caption.weight(.medium))
+
+                        HStack(spacing: 10) {
+                            Button {
+                                navigate(to: .developerLogs)
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "doc.text")
+                                        .font(.caption2)
+                                    Text("Logs")
+                                        .font(.caption.weight(.medium))
+                                }
+                                .foregroundStyle(.secondary)
                             }
-                            .foregroundStyle(.secondary)
+                            .buttonStyle(.plain)
+
+                            #if DEBUG && canImport(UIKit)
+                            Button {
+                                navigate(to: .testTranscript)
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "rectangle.on.rectangle.angled")
+                                        .font(.caption2)
+                                    Text("Transcript")
+                                        .font(.caption.weight(.medium))
+                                }
+                                .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                            #endif
                         }
-                        .buttonStyle(.plain)
                     }
                 }
 
@@ -1830,6 +1866,9 @@ private struct FolderSessionsView: View {
 private enum NavigationDestination: Hashable {
     case session(String)
     case developerLogs
+#if DEBUG && canImport(UIKit)
+    case testTranscript
+#endif
     case folderSessions(path: String, displayName: String)
 }
 
