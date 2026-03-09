@@ -59,10 +59,6 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
             }
         }
     }
-    @Published var useHighPerformanceChatRenderer: Bool = true {
-        didSet { defaults.set(useHighPerformanceChatRenderer, forKey: highPerformanceRendererKey) }
-    }
-
     @Published private(set) var servers: [ACPServerConfiguration] = []
     @Published var selectedServerId: UUID?
 
@@ -229,7 +225,7 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
     private let lastServerKey = "Agmente.lastServerId"
     private let devModeKey = "Agmente.devModeEnabled"
     private let codexSessionLoggingKey = "Agmente.codexSessionLoggingEnabled"
-    private let highPerformanceRendererKey = "Agmente.useHighPerformanceChatRenderer"
+    private let legacyHighPerformanceRendererKey = "Agmente.useHighPerformanceChatRenderer"
     private let codexPermissionPresetPrefix = "Agmente.codexPermissionPreset."
     private let serverLifecycleController: ServerLifecycleController
     private var isApplyingSelectedServerConfig = false
@@ -321,12 +317,7 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
         restoreSelectionFromDefaults()
         devModeEnabled = defaults.bool(forKey: devModeKey)
         codexSessionLoggingEnabled = defaults.bool(forKey: codexSessionLoggingKey)
-        if defaults.object(forKey: highPerformanceRendererKey) == nil {
-            useHighPerformanceChatRenderer = true
-        } else {
-            useHighPerformanceChatRenderer = defaults.bool(forKey: highPerformanceRendererKey)
-        }
-
+        defaults.removeObject(forKey: legacyHighPerformanceRendererKey)
         // Phase 2: Create ServerViewModel instances for each server
         // Use the appropriate ViewModel type based on serverType
         for server in servers {

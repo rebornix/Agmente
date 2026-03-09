@@ -4,13 +4,6 @@ import UIKit
 import ACP
 import ACPClient
 
-enum ChatGalleryRenderMode: String, CaseIterable, Identifiable {
-    case standard = "Standard"
-    case highPerformance = "High Performance"
-
-    var id: Self { self }
-}
-
 enum ChatGalleryPreset: String, CaseIterable, Identifiable {
     case codex = "Codex"
     case acp = "ACP"
@@ -24,15 +17,10 @@ private struct ChatGalleryScenario {
 }
 
 struct ChatComponentGalleryView: View {
-    @State private var renderMode: ChatGalleryRenderMode
     @State private var preset: ChatGalleryPreset
     @State private var transcriptState = ChatTranscriptState()
 
-    init(
-        initialMode: ChatGalleryRenderMode = .highPerformance,
-        initialPreset: ChatGalleryPreset = .codex
-    ) {
-        _renderMode = State(initialValue: initialMode)
+    init(initialPreset: ChatGalleryPreset = .codex) {
         _preset = State(initialValue: initialPreset)
     }
 
@@ -45,21 +33,12 @@ struct ChatComponentGalleryView: View {
             Color(.systemGray6)
                 .ignoresSafeArea()
 
-            Group {
-                if renderMode == .highPerformance {
-                    ChatTranscriptContainerView(
-                        state: transcriptState,
-                        messages: scenario.messages,
-                        contentInsets: .zero,
-                        actionHandlers: .none
-                    )
-                } else {
-                    LegacyChatTranscriptPreview(
-                        messages: scenario.messages,
-                        actionHandlers: .none
-                    )
-                }
-            }
+            ChatTranscriptContainerView(
+                state: transcriptState,
+                messages: scenario.messages,
+                contentInsets: .zero,
+                actionHandlers: .none
+            )
         }
         .safeAreaInset(edge: .top, spacing: 0) {
             transcriptControls
@@ -70,19 +49,16 @@ struct ChatComponentGalleryView: View {
 
     private var transcriptControls: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Picker("Renderer", selection: $renderMode) {
-                ForEach(ChatGalleryRenderMode.allCases) { mode in
-                    Text(mode.rawValue).tag(mode)
-                }
-            }
-            .pickerStyle(.segmented)
-
             Picker("Preset", selection: $preset) {
                 ForEach(ChatGalleryPreset.allCases) { value in
                     Text(value.rawValue).tag(value)
                 }
             }
             .pickerStyle(.segmented)
+
+            Text(scenario.summary)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
         }
         .padding(.horizontal, 16)
         .padding(.top, 8)
@@ -91,84 +67,6 @@ struct ChatComponentGalleryView: View {
         .overlay(alignment: .bottom) {
             Divider()
         }
-    }
-}
-
-private struct LegacyChatTranscriptPreview: View {
-    let messages: [ChatMessage]
-    let actionHandlers: ChatEntryActionHandlers
-
-    private var entries: [ChatEntry] {
-        ChatEntryMapper().entries(from: messages)
-    }
-
-    var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 12) {
-                ForEach(entries) { entry in
-                    row(for: entry)
-                }
-            }
-            .padding(12)
-        }
-    }
-
-    @ViewBuilder
-    private func row(for entry: ChatEntry) -> some View {
-        switch entry.kind {
-        case .userText:
-            UserBubble(content: entry.text)
-        case .userImages:
-            UserBubble(content: "", images: entry.images)
-        case .assistantMarkdown:
-            AssistantTextBubble(content: entry.text)
-                .padding(.horizontal, 2)
-        case .assistantThought:
-            AssistantTextBubble(content: entry.text)
-                .padding(.horizontal, 2)
-        case .assistantPlan:
-            ProposedPlanCard(
-                content: entry.text,
-                isStreaming: entry.isStreaming,
-                onImplement: {},
-                onContinuePlanning: {}
-            )
-            .padding(.horizontal, 2)
-        case .toolCall:
-            if let segment = entry.segment {
-                AssistantTextBubble(content: segment.toolCallSummaryText())
-                    .padding(.horizontal, 2)
-            }
-        case .fileChanges:
-            FileChangesSummaryView(
-                items: entry.fileChanges,
-                onUndo: { actionHandlers.onUndoFileChanges?() },
-                onReview: { actionHandlers.onReviewFileChanges?(entry.fileChanges) }
-            )
-        case .system:
-            SystemBubble(content: entry.text)
-        case .error:
-            ErrorBubble(content: entry.text)
-        case .streamingIndicator:
-            ShimmeringBubble(text: entry.text)
-        }
-    }
-}
-
-private struct GallerySection<Content: View>: View {
-    let title: String
-    @ViewBuilder var content: Content
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(title)
-                .font(.headline)
-
-            content
-        }
-        .padding(12)
-        .background(Color(.systemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 }
 
@@ -182,7 +80,7 @@ private enum ChatComponentMockData {
 
     static let componentPlanText = """
     1. Keep a single gallery screen for all row kinds.
-    2. Add segmented controls for renderer mode and preset data.
+    2. Add segmented controls for preset data.
     3. Use debug-only compilation so production builds stay unchanged.
     """
 
@@ -394,7 +292,7 @@ private enum ChatComponentMockData {
     private static func codexMessages() -> [ChatMessage] {
         let user = ChatMessage(
             role: .user,
-            content: "Can you show both renderers and all base components in one page?",
+            content: "Can you show the transcript and all base components in one page?",
             isStreaming: false,
             images: sampleImages
         )
@@ -406,17 +304,17 @@ private enum ChatComponentMockData {
             segments: [
                 AssistantSegment(
                     kind: .message,
-                    text: "I found two transcript paths: standard SwiftUI and high-performance UIKit."
+                    text: "I verified the shared transcript renderer and its component coverage."
                 ),
                 AssistantSegment(kind: .thought, text: componentThoughtText),
                 compactMultilineToolCallA,
                 compactMultilineToolCallB,
                 AssistantSegment(
                     kind: .toolCall,
-                    text: "Inspect renderer files",
+                    text: "Inspect transcript files",
                     toolCall: ToolCallDisplay(
                         toolCallId: "tool-codex-1",
-                        title: "Inspect renderer files",
+                        title: "Inspect transcript files",
                         kind: "search",
                         status: "completed",
                         output: "Found 5 files under Agmente/ChatRendering/HighPerformanceChatListView."
@@ -756,7 +654,7 @@ private struct RealRendererComponentPreview: View {
     ChatCoreComponentsListView()
 }
 
-#Preview("Renderer Switcher", traits: .fixedLayout(width: 760, height: 1400)) {
-    ChatComponentGalleryView(initialMode: .highPerformance, initialPreset: .codex)
+#Preview("Transcript Gallery", traits: .fixedLayout(width: 760, height: 1400)) {
+    ChatComponentGalleryView(initialPreset: .codex)
 }
 #endif

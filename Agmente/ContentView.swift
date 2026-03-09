@@ -227,7 +227,7 @@ private extension ContentView {
             DeveloperLogsView(model: model)
 #if DEBUG && canImport(UIKit)
         case .testTranscript:
-            ChatComponentGalleryView(initialMode: model.useHighPerformanceChatRenderer ? .highPerformance : .standard)
+            ChatComponentGalleryView()
                 .navigationTitle("Test Transcript")
 #endif
         case .folderSessions(let path, let displayName):
@@ -286,7 +286,6 @@ private extension ContentView {
         SettingsView(
             devModeEnabled: $model.devModeEnabled,
             codexSessionLoggingEnabled: $model.codexSessionLoggingEnabled,
-            useHighPerformanceChatRenderer: $model.useHighPerformanceChatRenderer,
             sessionLogger: model.codexSessionLoggerForExport
         )
     }

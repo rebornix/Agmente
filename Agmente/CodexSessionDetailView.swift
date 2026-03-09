@@ -85,13 +85,7 @@ struct CodexSessionDetailView: View {
                 .ignoresSafeArea()
 
             VStack(spacing: 12) {
-                Group {
-                    if model.useHighPerformanceChatRenderer {
-                        highPerformanceChatTranscript
-                    } else {
-                        chatTranscript
-                    }
-                }
+                transcriptContent
                     .frame(maxHeight: .infinity)
 
                 composer
@@ -111,22 +105,7 @@ struct CodexSessionDetailView: View {
         }
         .overlay(alignment: .bottomTrailing) {
             if shouldShowScrollToBottomButton {
-                Button {
-                    if model.useHighPerformanceChatRenderer {
-                        transcriptState.scrollToBottom(animated: true)
-                        transcriptState.isAtBottom = true
-                    } else {
-                        if #available(iOS 17.0, *) {
-                            if let lastId = sessionViewModel.chatMessages.last?.id {
-                                scrollPosition = lastId
-                                isAtBottom = true
-                            }
-                        } else {
-                            scrollToBottomAction?()
-                            isAtBottom = true
-                        }
-                    }
-                } label: {
+                Button(action: scrollTranscriptToBottom) {
                     if #available(iOS 26, macOS 26, *) {
                         Image(systemName: "arrow.down")
                             .font(.system(size: 14, weight: .semibold))
@@ -252,6 +231,25 @@ struct CodexSessionDetailView: View {
 }
 
 private extension CodexSessionDetailView {
+    @ViewBuilder
+    var transcriptContent: some View {
+#if os(iOS)
+        highPerformanceChatTranscript
+#else
+        chatTranscript
+#endif
+    }
+
+    func scrollTranscriptToBottom() {
+#if os(iOS)
+        transcriptState.scrollToBottom(animated: true)
+        transcriptState.isAtBottom = true
+#else
+        scrollToBottomAction?()
+#endif
+        isAtBottom = true
+    }
+
     private enum ToolCallCardStyle {
         static let background = Color(uiColor: UIColor { traitCollection in
             if traitCollection.userInterfaceStyle == .dark {

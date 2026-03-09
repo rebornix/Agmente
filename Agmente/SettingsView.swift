@@ -6,7 +6,6 @@ import AppKit
 struct SettingsView: View {
     @Binding var devModeEnabled: Bool
     @Binding var codexSessionLoggingEnabled: Bool
-    @Binding var useHighPerformanceChatRenderer: Bool
     var sessionLogger: CodexSessionLogger?
 
     @State private var isExportingLogs = false
@@ -105,14 +104,6 @@ struct SettingsView: View {
                 }
             }
         }
-#if os(iOS)
-        Section("Chat Rendering") {
-            Toggle("Use high-performance chat list", isOn: $useHighPerformanceChatRenderer)
-            Text("Uses ListViewKit + MarkdownView renderer. Turn off to use the legacy SwiftUI transcript for A/B testing.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-        }
-#endif
     }
 
     var body: some View {
@@ -260,7 +251,6 @@ private struct ShareSheetView: View {
 #Preview {
     SettingsView(
         devModeEnabled: .constant(true),
-        codexSessionLoggingEnabled: .constant(false),
-        useHighPerformanceChatRenderer: .constant(true)
+        codexSessionLoggingEnabled: .constant(false)
     )
 }
