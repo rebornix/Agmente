@@ -20,6 +20,7 @@ SwiftUI app layer and protocol routing logic:
 - `AppViewModel` owns one server view model per server ID.
 - ACP and Codex paths must remain protocol-isolated.
 - UI should consume unified protocol (`ServerViewModelProtocol`) where possible.
+- Detailed Codex load, resume, and merge behavior is specified in `Agmente/specs/codex-load-resume-merge.md`.
 - Selecting a different server must not persist the previously selected server's endpoint/token/cwd into the new server while rebinding published connection fields; apply stored config non-destructively, then reconnect.
 - Session/thread summaries should preserve server metadata (`cwd`, timestamps) when available.
 - ACP placeholder-session resolution must be non-destructive: when `session/new` returns a real session ID, preserve the in-memory user/assistant transcript, treat the new session as already materialized for the current connection, and avoid issuing a follow-up `session/load` if richer local state already exists or the fresh session is still empty.
@@ -47,6 +48,7 @@ SwiftUI app layer and protocol routing logic:
 ## Contribution Checklist
 - If changing initialization/protocol detection, validate ACP and Codex paths.
 - If changing session/thread metadata parsing, verify list + open-session behavior.
+- If changing Codex thread hydration or reconciliation behavior, update `Agmente/specs/codex-load-resume-merge.md` and the corresponding fixtures under `AgmenteTests/Fixtures/CodexThreadReadMerge/`.
 - If changing add-server UX, verify both protocol summaries and warnings are accurate.
 - If adding capability toggles/settings, persist and restore via existing model/storage patterns.
 

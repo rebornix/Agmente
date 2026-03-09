@@ -15,7 +15,6 @@ ACPClient/.build
 **/.swiftpm/xcode/xcuserdata/
 .claude/
 .codex/
-Specs/
 website/
 Scenarios/apple-store-reivew.md
 Scenarios/apple-store-review.md
