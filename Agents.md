@@ -172,6 +172,10 @@ xcodebuild -project /path/to/Agmente-oss/Agmente.xcodeproj \
 ### Prerequisites
 - Xcode installed with iOS Simulator
 - Xcode Build MCP server running (provides `mcp_xcodebuildmcp_*` tools)
+- If the in-session MCP tool subset does not expose required UI automation actions (`tap`, `swipe`, `gesture`, `type-text`, `long-press`), use the `xcodebuildmcp` CLI instead of workarounds:
+```bash
+npx -y xcodebuildmcp@latest tools
+```
 
 ### Testing Workflow
 
@@ -189,6 +193,7 @@ xcodebuild -project /path/to/Agmente-oss/Agmente.xcodeproj \
 
 Use these rules for every simulator automation run to avoid wrong taps and wrong mode selection:
 
+1. **Check MCP UI tool availability first.** If the in-session `mcp_xcodebuildmcp_*` subset is missing required interaction tools (`tap`, `swipe`, `gesture`, `type-text`, `long-press`), switch to `xcodebuildmcp` CLI.
 1. **Never tap from screenshots alone.** Always run `describe_ui` immediately before any tap/long-press/swipe that depends on coordinates.
 2. **Prefer semantic targeting first.** Use `tap(id: ...)` or `tap(label: ...)` before raw `x,y` coordinates.
 3. **Treat coordinates as single-use.** After any navigation, modal, keyboard show/hide, or form validation state change, run `describe_ui` again before the next coordinate tap.

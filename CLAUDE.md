@@ -46,3 +46,9 @@ This file is the entrypoint for cloud/Claude coding agents. Use it with `Agents.
 - For manual or simulator E2E requests, resolve the scenario from `e2e/scenarios/` before consulting any skill.
 - Treat `run`, `execute`, `validate`, and `reproduce` E2E requests as execute-only and agentic: run the real backend and tools, capture evidence, evaluate assertions, and clean up.
 - Do not modify repo files during an execute-only E2E run unless the user explicitly asks to fix, stabilize, add hooks, or make the scenario executable.
+- For simulator interaction, prefer the `xcodebuildmcp` CLI as the source of truth for available features:
+```bash
+npx -y xcodebuildmcp@latest tools
+```
+- Do not assume the in-session `mcp_xcodebuildmcp_*` subset includes interaction tools (`tap`, `swipe`, `gesture`, `type-text`, `long-press`).
+- If any required UI automation tool is missing from MCP exposure, switch to `xcodebuildmcp` CLI for simulator interaction.
