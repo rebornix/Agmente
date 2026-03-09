@@ -30,6 +30,7 @@ Use `thread/resume` only if:
 - listener attach/read path is unavailable
 
 Reason: `thread/resume` reconstructs from rollout and can replace the in-memory thread object.
+If `thread/resume` reports an in-progress turn, treat that as resume-derived state until a loaded-thread attach/read or a live turn notification confirms the turn is still active. In Agmente this means the composer should allow a local reset instead of immediately sending `turn/interrupt`.
 
 ### 3) Merge policy
 When merging hydrated data into local chat:

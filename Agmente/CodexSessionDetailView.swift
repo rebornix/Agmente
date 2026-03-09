@@ -467,6 +467,7 @@ private extension CodexSessionDetailView {
             && !serverViewModel.isStreaming
             && (hasPrompt || hasImages || hasCommand)
         let canCancelPrompt = serverViewModel.canInterruptActiveTurn
+        let canResetLikelyInFlightState = serverViewModel.canResetLikelyInFlightState
 
         return VStack(alignment: .leading, spacing: 8) {
             // Model picker, plan mode toggle, skills picker, permissions, and command picker row
@@ -561,30 +562,34 @@ private extension CodexSessionDetailView {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
                 Button {
-                    if serverViewModel.isStreaming {
+                    if canCancelPrompt {
                         serverViewModel.interruptActiveTurn()
+                    } else if canResetLikelyInFlightState {
+                        serverViewModel.clearLikelyInFlightState()
                     } else {
                         sendPrompt()
                     }
                 } label: {
-                    let isStreaming = serverViewModel.canInterruptActiveTurn
+                    let showsPendingAction = serverViewModel.isStreaming
                     let isConnected = model.connectionState == .connected
-                    Image(systemName: isStreaming ? "stop.fill" : "paperplane.fill")
+                    Image(systemName: showsPendingAction ? "stop.fill" : "paperplane.fill")
                         .font(.headline.weight(.bold))
-                        .foregroundStyle(isStreaming ? Color.primary : Color.white)
+                        .foregroundStyle(showsPendingAction ? Color.primary : Color.white)
                         .frame(width: 44, height: 44)
                         .background(
                             Circle()
-                                .fill(isStreaming ? Color(.systemGray5) : (isConnected ? Color.black : Color.gray))
+                                .fill(showsPendingAction ? Color(.systemGray5) : (isConnected ? Color.black : Color.gray))
                         )
                         .overlay(
                             Circle()
-                                .stroke(Color(.systemGray3), lineWidth: isStreaming ? 1 : 0)
+                                .stroke(Color(.systemGray3), lineWidth: showsPendingAction ? 1 : 0)
                         )
                 }
-                .disabled(!canSendPrompt && !canCancelPrompt)
+                .disabled(!canSendPrompt && !canCancelPrompt && !canResetLikelyInFlightState)
                 .buttonStyle(.plain)
-                .accessibilityLabel(serverViewModel.canInterruptActiveTurn ? "Stop" : "Send")
+                .accessibilityLabel(
+                    canCancelPrompt ? "Stop" : (canResetLikelyInFlightState ? "Reset" : "Send")
+                )
                 .accessibilityIdentifier("codexSendButton")
             }
         }

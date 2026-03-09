@@ -9,6 +9,34 @@ final class SessionStorage {
     
     private let container: NSPersistentContainer
     private var viewContext: NSManagedObjectContext { container.viewContext }
+
+    private func insertStoredServer() -> StoredServer? {
+        guard let entity = NSEntityDescription.entity(forEntityName: "StoredServer", in: viewContext) else {
+            return nil
+        }
+        return StoredServer(entity: entity, insertInto: viewContext)
+    }
+
+    private func insertStoredSession() -> StoredSession? {
+        guard let entity = NSEntityDescription.entity(forEntityName: "StoredSession", in: viewContext) else {
+            return nil
+        }
+        return StoredSession(entity: entity, insertInto: viewContext)
+    }
+
+    private func insertStoredMessage() -> StoredMessage? {
+        guard let entity = NSEntityDescription.entity(forEntityName: "StoredMessage", in: viewContext) else {
+            return nil
+        }
+        return StoredMessage(entity: entity, insertInto: viewContext)
+    }
+
+    private func storedMessageRequest(for session: StoredSession) -> NSFetchRequest<StoredMessage> {
+        let request = NSFetchRequest<StoredMessage>(entityName: "StoredMessage")
+        request.predicate = NSPredicate(format: "session == %@", session)
+        request.sortDescriptors = [NSSortDescriptor(keyPath: \StoredMessage.orderIndex, ascending: true)]
+        return request
+    }
     
     init(container: NSPersistentContainer) {
         self.container = container
@@ -59,7 +87,8 @@ final class SessionStorage {
             if let existing = results.first {
                 stored = existing
             } else {
-                stored = StoredServer(context: viewContext)
+                guard let newServer = insertStoredServer() else { return }
+                stored = newServer
                 stored.id = server.id
             }
             
@@ -195,7 +224,8 @@ final class SessionStorage {
                 stored = existing
                 isNew = false
             } else {
-                stored = StoredSession(context: viewContext)
+                guard let newSession = insertStoredSession() else { return }
+                stored = newSession
                 stored.sessionId = session.sessionId
                 stored.server = server
                 isNew = true
@@ -323,16 +353,16 @@ final class SessionStorage {
                 return
             }
             
-            // Delete existing messages
-            if let existingMessages = session.messages as? Set<StoredMessage> {
-                for message in existingMessages {
-                    viewContext.delete(message)
-                }
+            let existingMessages = try viewContext.fetch(storedMessageRequest(for: session))
+            for message in existingMessages {
+                viewContext.delete(message)
             }
             
+            let messageSet = session.mutableSetValue(forKey: "messages")
+
             // Add new messages
             for (index, messageInfo) in messages.enumerated() {
-                let stored = StoredMessage(context: viewContext)
+                guard let stored = insertStoredMessage() else { continue }
                 stored.messageId = messageInfo.messageId
                 stored.role = messageInfo.role
                 stored.content = messageInfo.content
@@ -340,6 +370,7 @@ final class SessionStorage {
                 stored.orderIndex = Int32(index)
                 stored.segmentsData = messageInfo.segmentsData
                 stored.session = session
+                messageSet.add(stored)
             }
             
             try viewContext.save()
@@ -360,15 +391,10 @@ final class SessionStorage {
             guard let session = try viewContext.fetch(sessionRequest).first else {
                 return []
             }
-            
-            guard let messagesSet = session.messages as? Set<StoredMessage> else {
-                return []
-            }
-            
-            // Sort by orderIndex
-            let sortedMessages = messagesSet.sorted { ($0.orderIndex) < ($1.orderIndex) }
-            
-            return sortedMessages.map { stored in
+
+            let messages = try viewContext.fetch(storedMessageRequest(for: session))
+
+            return messages.map { stored in
                 StoredMessageInfo(
                     messageId: stored.messageId ?? UUID(),
                     role: stored.role ?? "user",
@@ -395,13 +421,12 @@ final class SessionStorage {
             guard let session = try viewContext.fetch(sessionRequest).first else {
                 return
             }
-            
-            if let existingMessages = session.messages as? Set<StoredMessage> {
-                for message in existingMessages {
-                    viewContext.delete(message)
-                }
+
+            let existingMessages = try viewContext.fetch(storedMessageRequest(for: session))
+            for message in existingMessages {
+                viewContext.delete(message)
             }
-            
+
             try viewContext.save()
         } catch {
         }

@@ -128,6 +128,31 @@ final class AgentViewModelTests: XCTestCase {
         return service
     }
 
+    private func sentMessages(connection: RecordingWebSocketConnection) -> [ACPWireMessage] {
+        connection.sentTextsSnapshot().compactMap { text in
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let data = trimmed.data(using: .utf8) else { return nil }
+            return try? JSONDecoder().decode(ACPWireMessage.self, from: data)
+        }
+    }
+
+    private func waitForSentResponse(
+        connection: RecordingWebSocketConnection,
+        id: ACP.ID,
+        attempts: Int = 200
+    ) async -> ACP.AnyResponse? {
+        for _ in 0..<attempts {
+            if let response = sentMessages(connection: connection).compactMap({ message -> ACP.AnyResponse? in
+                guard case let .response(response) = message else { return nil }
+                return response
+            }).first(where: { $0.id == id }) {
+                return response
+            }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        return nil
+    }
+
     func testCapabilitySupportReturnsNilBeforeInitialize() {
         let model = makeModel()
         addServer(to: model)
@@ -669,19 +694,12 @@ final class AgentViewModelTests: XCTestCase {
         model.acpService(service, didReceiveMessage: .request(permissionRequest))
 
         model.sendPermissionResponse(requestId: .int(0), optionId: "proceed_once")
-        try await Task.sleep(nanoseconds: 50_000_000)
 
         let toolSegment = model.selectedServerViewModel?.currentSessionViewModel?.chatMessages.first?.segments.first(where: { $0.kind == .toolCall })
         XCTAssertNil(toolSegment?.toolCall?.permissionOptions)
 
-        guard let lastSent = connection.sentTextsSnapshot().last else {
+        guard let sentResponse = await waitForSentResponse(connection: connection, id: .int(0)) else {
             XCTFail("Expected permission response to be sent")
-            return
-        }
-        let trimmed = lastSent.trimmingCharacters(in: .whitespacesAndNewlines)
-        let sentMessage = try JSONDecoder().decode(ACPWireMessage.self, from: Data(trimmed.utf8))
-        guard case let .response(sentResponse) = sentMessage else {
-            XCTFail("Expected JSON-RPC response message")
             return
         }
         XCTAssertEqual(sentResponse.id, .int(0))
@@ -949,17 +967,10 @@ final class AgentViewModelTests: XCTestCase {
 
         // Step 4: User grants permission (Allow)
         model.sendPermissionResponse(requestId: .int(0), optionId: "proceed_once")
-        try await Task.sleep(nanoseconds: 50_000_000)
 
         // Verify permission response was sent
-        guard let lastSent = connection.sentTextsSnapshot().last else {
+        guard let sentResponse = await waitForSentResponse(connection: connection, id: .int(0)) else {
             XCTFail("Expected permission response to be sent")
-            return
-        }
-        let trimmed = lastSent.trimmingCharacters(in: .whitespacesAndNewlines)
-        let sentMessage = try JSONDecoder().decode(ACPWireMessage.self, from: Data(trimmed.utf8))
-        guard case let .response(sentResponse) = sentMessage else {
-            XCTFail("Expected JSON-RPC response message")
             return
         }
         XCTAssertEqual(sentResponse.id, .int(0))

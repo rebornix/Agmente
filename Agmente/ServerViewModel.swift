@@ -569,6 +569,7 @@ final class ServerViewModel: ObservableObject, Identifiable, ServerViewModelProt
         connectionManager.markSessionMaterialized(resolvedId)
         lastLoadedSession = resolvedId
         setActiveSession(resolvedId, cwd: resolvedCwd, modes: modesInfo)
+        currentSessionViewModel?.saveChatState()
 
         if resolvedId != placeholderId {
             removePlaceholderSession(placeholderId, replacedBy: resolvedId)
@@ -866,16 +867,16 @@ final class ServerViewModel: ObservableObject, Identifiable, ServerViewModelProt
         if connectionState == .connected,
            let service = getServiceClosure(),
            isInitialized {
-            let configuredCwd = sanitizedCwd ?? resolvedWorkingDirectory
-            let creationCwd = effectiveWorkingDirectory(configuredCwd)
-            pendingNewSessionCwd = creationCwd
             pendingNewSessionPlaceholderId = pendingId
-            let newCwdAdded = rememberUsedWorkingDirectory(creationCwd)
-            // Update the flag - use OR to preserve any previous true value
-            pendingLocalSessionNewCwds[pendingId] = (pendingLocalSessionNewCwds[pendingId] == true) || newCwdAdded
 
             let task = Task { @MainActor [weak self] in
                 guard let self else { return }
+                let configuredCwd = self.pendingLocalSessionCwds[pendingId] ?? self.resolvedWorkingDirectory
+                let creationCwd = self.effectiveWorkingDirectory(configuredCwd)
+                self.pendingNewSessionCwd = creationCwd
+                let newCwdAdded = self.rememberUsedWorkingDirectory(creationCwd)
+                // Preserve any earlier working-directory discovery from placeholder edits.
+                self.pendingLocalSessionNewCwds[pendingId] = (self.pendingLocalSessionNewCwds[pendingId] == true) || newCwdAdded
                 let payload = ACPSessionCreatePayload(
                     workingDirectory: creationCwd,
                     mcpServers: []

@@ -63,6 +63,7 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
     var canInterruptActiveTurn: Bool {
         guard connectionState == .connected else { return false }
         guard let activeTurnId, !activeTurnId.isEmpty else { return false }
+        guard activeTurnIsInterruptible else { return false }
 
         let currentThreadId = firstNonEmptyOptionalString(
             selectedSessionId,
@@ -75,6 +76,10 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
         }
 
         return true
+    }
+
+    var canResetLikelyInFlightState: Bool {
+        isStreaming && !canInterruptActiveTurn
     }
 
     var isPendingSession: Bool {
@@ -167,7 +172,14 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
     private var lastStreamingEventAtByThreadId: [String: Date] = [:]
 
     private var activeThreadId: String?
-    private var activeTurnId: String?
+    private var activeTurnId: String? {
+        didSet {
+            if activeTurnId?.isEmpty != false {
+                activeTurnIsInterruptible = false
+            }
+        }
+    }
+    private var activeTurnIsInterruptible: Bool = false
     /// Tracks the last known in-flight turn for threads other than the active one.
     /// Populated when switching away from a thread that has an active turn.
     private var savedTurnByThread: [String: String] = [:]
@@ -653,15 +665,16 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
                 let hasStreamingMessageBeforeResume = existingMessages.contains(where: { $0.isStreaming })
                 let activeTurnBeforeResume = (id == sessionId) ? activeTurnId : nil
                 let savedTurnForThread = savedTurnByThread.removeValue(forKey: id)
-                let hadStreamingBeforeResume = activeTurnBeforeResume != nil
-                    || savedTurnForThread != nil
-                    || hasStreamingMessageBeforeResume
-                let likelyInFlightStreaming = savedTurnForThread != nil
-                    || isLikelyInFlightStreamingState(
-                        threadId: id,
-                        activeTurnId: activeTurnBeforeResume,
-                        hasStreamingMessage: hasStreamingMessageBeforeResume
-                    )
+                let localTurnBeforeResume = firstNonEmptyOptionalString(
+                    savedTurnForThread,
+                    activeTurnBeforeResume
+                )
+                let likelyInFlightStreaming = isLikelyInFlightStreamingState(
+                    threadId: id,
+                    activeTurnId: localTurnBeforeResume,
+                    hasStreamingMessage: hasStreamingMessageBeforeResume
+                )
+                let hadStreamingBeforeResume = likelyInFlightStreaming
                 trace(
                     "openSession pre-resume thread=\(id) existingMessages=\(existingMessages.count) existingToolCalls=\(countToolCallSegments(in: existingMessages)) hadStreaming=\(hadStreamingBeforeResume) likelyInFlight=\(likelyInFlightStreaming)"
                 )
@@ -732,7 +745,10 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
                         if resumedItems == 0 {
                             currentSessionViewModel?.setSessionContext(serverId: self.id, sessionId: id)
                             if !hadStreamingBeforeResume {
-                                applyStreamingStateFromResume(result)
+                                applyStreamingStateFromResume(
+                                    result,
+                                    interruptible: !usedResumeBasedHydration
+                                )
                             } else {
                                 trace("openSession preserve streaming source=\(hydrationSource) thread=\(id)")
                             }
@@ -742,7 +758,10 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
                             // Keep rich local tool-call rows while still ingesting newly resumed items.
                             let merge = mergeChatFromThreadHistory(result, preferLocalRichness: true)
                             if !hadStreamingBeforeResume {
-                                applyStreamingStateFromResume(result)
+                                applyStreamingStateFromResume(
+                                    result,
+                                    interruptible: !usedResumeBasedHydration
+                                )
                             } else {
                                 trace("openSession preserve streaming source=\(hydrationSource) thread=\(id)")
                             }
@@ -755,7 +774,10 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
                         // Populate chat messages from the server response
                         let merge = mergeChatFromThreadHistory(result)
                         if !hadStreamingBeforeResume {
-                            applyStreamingStateFromResume(result)
+                            applyStreamingStateFromResume(
+                                result,
+                                interruptible: !usedResumeBasedHydration
+                            )
                         } else {
                             trace("openSession preserve streaming source=\(hydrationSource) thread=\(id)")
                         }
@@ -834,17 +856,17 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
             guard let self else { return }
             cancelPostResumeRefreshTask()
             let existingMessages = sessionViewModels[activeId]?.chatMessages ?? []
-            let hasStreamingMessageBeforeResume = existingMessages.contains(where: { $0.isStreaming })
-            let activeTurnBeforeResume = activeTurnId
-            let hadStreamingBeforeResume = activeTurnBeforeResume != nil || hasStreamingMessageBeforeResume
-            let likelyInFlightStreaming = isLikelyInFlightStreamingState(
-                threadId: activeId,
-                activeTurnId: activeTurnBeforeResume,
-                hasStreamingMessage: hasStreamingMessageBeforeResume
-            )
-            let pendingCwd = sessionSummaries.first(where: { $0.id == activeId })?.cwd
-            trace(
-                "resubscribe begin thread=\(activeId) existingMessages=\(existingMessages.count) existingToolCalls=\(countToolCallSegments(in: existingMessages)) hadStreaming=\(hadStreamingBeforeResume) likelyInFlight=\(likelyInFlightStreaming)"
+                let hasStreamingMessageBeforeResume = existingMessages.contains(where: { $0.isStreaming })
+                let activeTurnBeforeResume = activeTurnId
+                let likelyInFlightStreaming = isLikelyInFlightStreamingState(
+                    threadId: activeId,
+                    activeTurnId: activeTurnBeforeResume,
+                    hasStreamingMessage: hasStreamingMessageBeforeResume
+                )
+                let hadStreamingBeforeResume = likelyInFlightStreaming
+                let pendingCwd = sessionSummaries.first(where: { $0.id == activeId })?.cwd
+                trace(
+                    "resubscribe begin thread=\(activeId) existingMessages=\(existingMessages.count) existingToolCalls=\(countToolCallSegments(in: existingMessages)) hadStreaming=\(hadStreamingBeforeResume) likelyInFlight=\(likelyInFlightStreaming)"
             )
             logOpen(
                 "Resubscribe begin thread=\(activeId) existingMessages=\(existingMessages.count) hadStreaming=\(hadStreamingBeforeResume) likelyInFlight=\(likelyInFlightStreaming)"
@@ -933,7 +955,10 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
                         if resumedItems == 0 {
                             currentSessionViewModel?.setSessionContext(serverId: self.id, sessionId: activeId)
                             if !hadStreamingBeforeResume {
-                                applyStreamingStateFromResume(result)
+                                applyStreamingStateFromResume(
+                                    result,
+                                    interruptible: !usedResumeBasedHydration
+                                )
                             } else {
                                 trace("resubscribe preserve streaming source=\(hydrationSource) thread=\(activeId)")
                             }
@@ -942,7 +967,10 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
                             // Keep rich local tool-call rows while still ingesting newly resumed items.
                             let merge = mergeChatFromThreadHistory(result, preferLocalRichness: true)
                             if !hadStreamingBeforeResume {
-                                applyStreamingStateFromResume(result)
+                                applyStreamingStateFromResume(
+                                    result,
+                                    interruptible: !usedResumeBasedHydration
+                                )
                             } else {
                                 trace("resubscribe preserve streaming source=\(hydrationSource) thread=\(activeId)")
                             }
@@ -964,7 +992,10 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
                     } else {
                         let merge = mergeChatFromThreadHistory(result)
                         if !hadStreamingBeforeResume {
-                            applyStreamingStateFromResume(result)
+                            applyStreamingStateFromResume(
+                                result,
+                                interruptible: !usedResumeBasedHydration
+                            )
                         } else {
                             trace("resubscribe preserve streaming source=\(hydrationSource) thread=\(activeId)")
                         }
@@ -1986,6 +2017,35 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
         }
     }
 
+    func clearLikelyInFlightState() {
+        let resolvedThreadId = firstNonEmptyOptionalString(
+            selectedSessionId,
+            sessionId.isEmpty ? nil : sessionId,
+            activeThreadId
+        )
+        guard let resolvedThreadId, !resolvedThreadId.isEmpty else { return }
+
+        if activeThreadId == nil || activeThreadId == resolvedThreadId {
+            if let activeTurnId, !activeTurnId.isEmpty {
+                turnStreamingMessageIds.removeValue(forKey: activeTurnId)
+            }
+            activeTurnId = nil
+        }
+
+        if let savedTurnId = savedTurnByThread.removeValue(forKey: resolvedThreadId), !savedTurnId.isEmpty {
+            turnStreamingMessageIds.removeValue(forKey: savedTurnId)
+        }
+        lastStreamingEventAtByThreadId.removeValue(forKey: resolvedThreadId)
+
+        if let viewModel = sessionViewModels[resolvedThreadId] {
+            viewModel.abandonStreamingMessage()
+        } else {
+            currentSessionViewModel?.abandonStreamingMessage()
+        }
+
+        appendClosure("Reset pending turn state")
+    }
+
     // MARK: - Session List
 
     func fetchSessionList(force: Bool = false) {
@@ -2152,7 +2212,7 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
                         count += turn.items.count
                     }
                     let merge = mergeChatFromThreadHistory(refreshed, preferLocalRichness: true)
-                    applyStreamingStateFromResume(refreshed)
+                    applyStreamingStateFromResume(refreshed, interruptible: false)
                     trace(
                         "postResumeRefresh apply source=\(source) thread=\(threadId) attempt=\(attempt) items=\(refreshedItems) activeTurnId=\(refreshed.activeTurnId ?? "nil")"
                     )
@@ -2233,18 +2293,25 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
         openSessionTask = nil
     }
 
-    private func applyStreamingStateFromResume(_ result: CodexThreadResumeResult) {
+    private func applyStreamingStateFromResume(
+        _ result: CodexThreadResumeResult,
+        interruptible: Bool
+    ) {
         guard let viewModel = currentSessionViewModel else { return }
         let hadStreamingMessage = viewModel.chatMessages.contains(where: { $0.isStreaming })
 
         if let activeTurnId = result.activeTurnId {
+            activeTurnIsInterruptible = interruptible
             bindStreamingMessageForTurn(activeTurnId, ensureExists: true, reason: "resume")
         } else if viewModel.chatMessages.contains(where: { $0.isStreaming }) {
+            activeTurnIsInterruptible = false
             viewModel.bindStreamingAssistantMessage(to: nil)
+        } else {
+            activeTurnIsInterruptible = false
         }
         let hasStreamingMessage = viewModel.chatMessages.contains(where: { $0.isStreaming })
         trace(
-            "applyStreamingStateFromResume activeTurnId=\(result.activeTurnId ?? "nil") hadStreamingMessage=\(hadStreamingMessage) hasStreamingMessage=\(hasStreamingMessage)"
+            "applyStreamingStateFromResume activeTurnId=\(result.activeTurnId ?? "nil") interruptible=\(interruptible) hadStreamingMessage=\(hadStreamingMessage) hasStreamingMessage=\(hasStreamingMessage)"
         )
     }
 
@@ -2271,11 +2338,9 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
         activeTurnId: String?,
         hasStreamingMessage: Bool
     ) -> Bool {
-        if let activeTurnId, !activeTurnId.isEmpty {
-            return true
-        }
-        guard hasStreamingMessage else { return false }
         guard let lastStreamingEventAt = lastStreamingEventAtByThreadId[threadId] else { return false }
+        let hasLocalInFlightState = (activeTurnId?.isEmpty == false) || hasStreamingMessage
+        guard hasLocalInFlightState else { return false }
         return Date().timeIntervalSince(lastStreamingEventAt) <= Self.streamingRecencyWindow
     }
 
@@ -2623,6 +2688,7 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
         activeThreadId = threadId
         activeTurnId = response.result?.objectValue?["turn"]?.objectValue?["id"]?.stringValue
         if let activeTurnId, !activeTurnId.isEmpty {
+            activeTurnIsInterruptible = true
             markStreamingActivity(threadId: threadId)
             bindStreamingMessageForTurn(activeTurnId, ensureExists: true, reason: "turn/start")
         }
@@ -2671,6 +2737,7 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
         }
         activeThreadId = result.id
         activeTurnId = result.activeTurnId
+        activeTurnIsInterruptible = false
         return result
     }
 
@@ -2994,6 +3061,7 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
                 if let turnId = params["turn"]?.objectValue?["id"]?.stringValue {
                     cancelPostResumeRefreshTask()
                     activeTurnId = turnId
+                    activeTurnIsInterruptible = true
                     markStreamingActivity(threadId: threadId)
                     bindStreamingMessageForTurn(turnId, ensureExists: true, reason: "turn/started")
                     trace("notif apply method=turn/started newActiveTurn=\(turnId)")
@@ -3410,6 +3478,7 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
     ) {
         guard let incomingTurnId, !incomingTurnId.isEmpty else { return }
         if activeTurnId == incomingTurnId {
+            activeTurnIsInterruptible = true
             if ensureStreamingMessage {
                 markStreamingActivity(threadId: activeThreadId)
                 bindStreamingMessageForTurn(incomingTurnId, ensureExists: true, reason: "align/same/\(method)")
@@ -3418,6 +3487,7 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
         }
         let previous = activeTurnId ?? "nil"
         activeTurnId = incomingTurnId
+        activeTurnIsInterruptible = true
         markStreamingActivity(threadId: activeThreadId)
         if ensureStreamingMessage {
             bindStreamingMessageForTurn(incomingTurnId, ensureExists: true, reason: "align/\(method)")
@@ -4155,7 +4225,18 @@ extension CodexServerViewModel {
     ) -> Bool {
         guard let parsed = parseThreadResume(result: .object(resultObject)) else { return false }
         _ = mergeChatFromThreadHistory(parsed, preferLocalRichness: preferLocalRichness)
-        applyStreamingStateFromResume(parsed)
+        applyStreamingStateFromResume(parsed, interruptible: true)
+        return true
+    }
+
+    @discardableResult
+    func applyResumeMergeForTesting(
+        resultObject: [String: JSONValue],
+        preferLocalRichness: Bool = true
+    ) -> Bool {
+        guard let parsed = parseThreadResume(result: .object(resultObject)) else { return false }
+        _ = mergeChatFromThreadHistory(parsed, preferLocalRichness: preferLocalRichness)
+        applyStreamingStateFromResume(parsed, interruptible: false)
         return true
     }
 
@@ -4180,6 +4261,22 @@ extension CodexServerViewModel {
     /// Seeds a saved in-flight turn directly for testing.
     func seedSavedTurnForTesting(threadId: String, turnId: String) {
         savedTurnByThread[threadId] = turnId
+    }
+
+    func seedLastStreamingEventAtForTesting(threadId: String, date: Date) {
+        lastStreamingEventAtByThreadId[threadId] = date
+    }
+
+    func isLikelyInFlightStreamingStateForTesting(
+        threadId: String,
+        activeTurnId: String?,
+        hasStreamingMessage: Bool
+    ) -> Bool {
+        isLikelyInFlightStreamingState(
+            threadId: threadId,
+            activeTurnId: activeTurnId,
+            hasStreamingMessage: hasStreamingMessage
+        )
     }
 }
 #endif

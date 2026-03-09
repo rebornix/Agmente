@@ -496,6 +496,161 @@ final class CodexServerViewModelTests: XCTestCase {
         XCTAssertFalse(codexVM.isStreaming)
     }
 
+    func testCodexServerViewModel_StaleLocalTurnDoesNotCountAsInFlightWithoutRecentActivity() {
+        let model = makeModel()
+        addServer(to: model)
+
+        let service = makeService()
+        let initRequest = ACP.AnyRequest(id: .int(1), method: "initialize", params: nil)
+        model.acpService(service, willSend: initRequest)
+        let result: ACP.Value = .object([
+            "userAgent": .string("codex/1.0.0"),
+        ])
+        model.acpService(service, didReceiveMessage: .response(ACP.AnyResponse(id: .int(1), result: result)))
+
+        guard let codexVM = model.selectedCodexServerViewModel else {
+            XCTFail("Expected CodexServerViewModel")
+            return
+        }
+
+        codexVM.seedLastStreamingEventAtForTesting(
+            threadId: "thread-stale",
+            date: Date().addingTimeInterval(-120)
+        )
+
+        XCTAssertFalse(
+            codexVM.isLikelyInFlightStreamingStateForTesting(
+                threadId: "thread-stale",
+                activeTurnId: "turn-old",
+                hasStreamingMessage: true
+            ),
+            "Old local turn state should not survive indefinitely without recent streaming activity"
+        )
+    }
+
+    func testCodexServerViewModel_RecentLocalTurnStillCountsAsInFlight() {
+        let model = makeModel()
+        addServer(to: model)
+
+        let service = makeService()
+        let initRequest = ACP.AnyRequest(id: .int(1), method: "initialize", params: nil)
+        model.acpService(service, willSend: initRequest)
+        let result: ACP.Value = .object([
+            "userAgent": .string("codex/1.0.0"),
+        ])
+        model.acpService(service, didReceiveMessage: .response(ACP.AnyResponse(id: .int(1), result: result)))
+
+        guard let codexVM = model.selectedCodexServerViewModel else {
+            XCTFail("Expected CodexServerViewModel")
+            return
+        }
+
+        codexVM.seedLastStreamingEventAtForTesting(
+            threadId: "thread-live",
+            date: Date()
+        )
+
+        XCTAssertTrue(
+            codexVM.isLikelyInFlightStreamingStateForTesting(
+                threadId: "thread-live",
+                activeTurnId: "turn-live",
+                hasStreamingMessage: false
+            ),
+            "Recent turn activity should still preserve in-flight state during reconnect"
+        )
+    }
+
+    func testCodexServerViewModel_ClearLikelyInFlightStateResetsComposerWithoutDroppingPartialText() {
+        let model = makeModel()
+        addServer(to: model)
+
+        let service = makeService()
+        let initRequest = ACP.AnyRequest(id: .int(1), method: "initialize", params: nil)
+        model.acpService(service, willSend: initRequest)
+        let result: ACP.Value = .object([
+            "userAgent": .string("codex/1.0.0"),
+        ])
+        model.acpService(service, didReceiveMessage: .response(ACP.AnyResponse(id: .int(1), result: result)))
+
+        guard let codexVM = model.selectedCodexServerViewModel else {
+            XCTFail("Expected CodexServerViewModel")
+            return
+        }
+
+        codexVM.setActiveSession("thread-reset", cwd: "/workspace", modes: nil)
+        codexVM.currentSessionViewModel?.startNewStreamingResponse()
+        codexVM.currentSessionViewModel?.appendAssistantText("partial reply", kind: .message)
+
+        XCTAssertTrue(codexVM.isStreaming, "A stale streaming row should still block send")
+        XCTAssertTrue(codexVM.canResetLikelyInFlightState, "Composer should expose a local reset path when no interrupt is possible")
+        XCTAssertFalse(codexVM.canInterruptActiveTurn, "No real active turn exists in this stale local state")
+
+        codexVM.clearLikelyInFlightState()
+
+        XCTAssertFalse(codexVM.isStreaming, "Reset should unblock the composer")
+        XCTAssertFalse(codexVM.canResetLikelyInFlightState, "Reset path should clear once local state is gone")
+        XCTAssertFalse(codexVM.canInterruptActiveTurn)
+        XCTAssertEqual(codexVM.currentSessionViewModel?.chatMessages.count, 1)
+        XCTAssertEqual(codexVM.currentSessionViewModel?.chatMessages.last?.content, "partial reply")
+        XCTAssertEqual(codexVM.currentSessionViewModel?.chatMessages.last?.isStreaming, false)
+    }
+
+    func testCodexServerViewModel_ResumeDerivedActiveTurnUsesResetUntilLiveEventConfirmsIt() {
+        let model = makeModel()
+        addServer(to: model)
+
+        let service = makeService()
+        let initRequest = ACP.AnyRequest(id: .int(1), method: "initialize", params: nil)
+        model.acpService(service, willSend: initRequest)
+        let result: ACP.Value = .object([
+            "userAgent": .string("codex/1.0.0"),
+        ])
+        model.acpService(service, didReceiveMessage: .response(ACP.AnyResponse(id: .int(1), result: result)))
+
+        guard let codexVM = model.selectedCodexServerViewModel else {
+            XCTFail("Expected CodexServerViewModel")
+            return
+        }
+
+        codexVM.setActiveSession("thread-resume", cwd: "/workspace", modes: nil)
+        model.setServiceForTesting(service)
+
+        let applied = codexVM.applyResumeMergeForTesting(
+            resultObject: [
+                "thread": .object([
+                    "id": .string("thread-resume"),
+                    "turns": .array([
+                        .object([
+                            "id": .string("turn-resume-1"),
+                            "status": .string("in_progress"),
+                            "items": .array([]),
+                        ]),
+                    ]),
+                ]),
+            ],
+            preferLocalRichness: true
+        )
+
+        XCTAssertTrue(applied)
+        XCTAssertTrue(codexVM.isStreaming, "Resume-derived active turns should still block send")
+        XCTAssertFalse(codexVM.canInterruptActiveTurn, "Resume-derived turns should not hang on turn/interrupt")
+        XCTAssertTrue(codexVM.canResetLikelyInFlightState, "Composer should offer local reset for resume-derived turns")
+
+        let turnStarted = JSONRPCMessage.notification(
+            JSONRPCNotification(
+                method: "turn/started",
+                params: .object([
+                    "threadId": .string("thread-resume"),
+                    "turn": .object(["id": .string("turn-resume-1")]),
+                ])
+            )
+        )
+        codexVM.handleCodexMessage(turnStarted)
+
+        XCTAssertTrue(codexVM.canInterruptActiveTurn, "Live turn events should restore real interrupt behavior")
+        XCTAssertFalse(codexVM.canResetLikelyInFlightState)
+    }
+
     func testCodexServerViewModel_PlanDeltaAndPlanUpdatedRenderPlanSegment() {
         let model = makeModel()
         addServer(to: model)

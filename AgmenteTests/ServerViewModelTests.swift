@@ -180,23 +180,35 @@ final class ServerViewModelTests: XCTestCase {
         }
     }
 
-    private func waitForSentText(
+    private func extractRequest(from text: String) throws -> [String: Any] {
+        let data = try XCTUnwrap(text.data(using: .utf8))
+        return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    }
+
+    private func sentRequests(connection: RecordingWebSocketConnection) -> [[String: Any]] {
+        connection.sentTextsSnapshot().compactMap { text in
+            try? extractRequest(from: text)
+        }
+    }
+
+    private func hasSentRequest(connection: RecordingWebSocketConnection, method: String) -> Bool {
+        sentRequests(connection: connection).contains { request in
+            request["method"] as? String == method
+        }
+    }
+
+    private func waitForSentRequest(
         connection: RecordingWebSocketConnection,
-        matching predicate: @escaping (String) -> Bool,
+        method: String,
         attempts: Int = 200
-    ) async -> String? {
+    ) async -> [String: Any]? {
         for _ in 0..<attempts {
-            if let text = connection.sentTextsSnapshot().first(where: predicate) {
-                return text
+            if let request = sentRequests(connection: connection).first(where: { $0["method"] as? String == method }) {
+                return request
             }
             try? await Task.sleep(nanoseconds: 10_000_000)
         }
         return nil
-    }
-
-    private func extractRequest(from text: String) throws -> [String: Any] {
-        let data = try XCTUnwrap(text.data(using: .utf8))
-        return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
     }
 
     private func enqueueResponse(id: Int, result: ACP.Value, on connection: RecordingWebSocketConnection) throws {
@@ -244,8 +256,8 @@ final class ServerViewModelTests: XCTestCase {
         manager.setServiceForTesting(service)
 
         Task {
-            guard let initText = await self.waitForSentText(connection: connection, matching: { $0.contains("\"method\":\"initialize\"") }),
-                  let initId = try? self.extractRequest(from: initText)["id"] as? Int else {
+            guard let initRequest = await self.waitForSentRequest(connection: connection, method: "initialize"),
+                  let initId = initRequest["id"] as? Int else {
                 return
             }
             try? self.enqueueResponse(id: initId, result: .object(["status": .string("ok")]), on: connection)
@@ -281,8 +293,7 @@ final class ServerViewModelTests: XCTestCase {
         serverViewModel.updatePendingSessionWorkingDirectory("/tmp/custom-project")
 
         Task {
-            guard let newSessionText = await self.waitForSentText(connection: connection, matching: { $0.contains("\"method\":\"session/new\"") }),
-                  let newSessionRequest = try? self.extractRequest(from: newSessionText),
+            guard let newSessionRequest = await self.waitForSentRequest(connection: connection, method: "session/new"),
                   let newSessionId = newSessionRequest["id"] as? Int else {
                 return
             }
@@ -295,8 +306,7 @@ final class ServerViewModelTests: XCTestCase {
                 on: connection
             )
 
-            guard let promptText = await self.waitForSentText(connection: connection, matching: { $0.contains("\"method\":\"session/prompt\"") }),
-                  let promptRequest = try? self.extractRequest(from: promptText),
+            guard let promptRequest = await self.waitForSentRequest(connection: connection, method: "session/prompt"),
                   let promptId = promptRequest["id"] as? Int else {
                 return
             }
@@ -309,25 +319,17 @@ final class ServerViewModelTests: XCTestCase {
 
         serverViewModel.sendPrompt(promptText: "hello", images: [])
 
-        let newSessionTextMaybe = await waitForSentText(
-            connection: connection,
-            matching: { $0.contains("\"method\":\"session/new\"") }
-        )
-        let newSessionText = try XCTUnwrap(newSessionTextMaybe)
-        let newSessionRequest = try extractRequest(from: newSessionText)
+        let newSessionRequestMaybe = await waitForSentRequest(connection: connection, method: "session/new")
+        let newSessionRequest = try XCTUnwrap(newSessionRequestMaybe)
         let newSessionParams = try XCTUnwrap(newSessionRequest["params"] as? [String: Any])
-        XCTAssertEqual(newSessionParams["workingDirectory"] as? String, "/tmp/custom-project")
+        XCTAssertEqual(newSessionParams["cwd"] as? String, "/tmp/custom-project")
 
-        let promptTextMaybe = await waitForSentText(
-            connection: connection,
-            matching: { $0.contains("\"method\":\"session/prompt\"") }
-        )
-        let promptText = try XCTUnwrap(promptTextMaybe)
-        let promptRequest = try extractRequest(from: promptText)
+        let promptRequestMaybe = await waitForSentRequest(connection: connection, method: "session/prompt")
+        let promptRequest = try XCTUnwrap(promptRequestMaybe)
         let promptParams = try XCTUnwrap(promptRequest["params"] as? [String: Any])
         XCTAssertEqual(promptParams["sessionId"] as? String, "server-session-123")
         XCTAssertNotEqual(promptParams["sessionId"] as? String, placeholderId)
-        XCTAssertNil(connection.sentTextsSnapshot().first(where: { $0.contains("\"method\":\"session/load\"") }))
+        XCTAssertFalse(hasSentRequest(connection: connection, method: "session/load"))
 
         let currentMessages = try XCTUnwrap(serverViewModel.currentSessionViewModel?.chatMessages)
         XCTAssertEqual(currentMessages.first?.content, "hello")
@@ -352,8 +354,8 @@ final class ServerViewModelTests: XCTestCase {
         manager.setServiceForTesting(service)
 
         Task {
-            guard let initText = await self.waitForSentText(connection: connection, matching: { $0.contains("\"method\":\"initialize\"") }),
-                  let initId = try? self.extractRequest(from: initText)["id"] as? Int else {
+            guard let initRequest = await self.waitForSentRequest(connection: connection, method: "initialize"),
+                  let initId = initRequest["id"] as? Int else {
                 return
             }
             try? self.enqueueResponse(id: initId, result: .object(["status": .string("ok")]), on: connection)
@@ -380,8 +382,7 @@ final class ServerViewModelTests: XCTestCase {
         )
 
         Task {
-            guard let newSessionText = await self.waitForSentText(connection: connection, matching: { $0.contains("\"method\":\"session/new\"") }),
-                  let newSessionRequest = try? self.extractRequest(from: newSessionText),
+            guard let newSessionRequest = await self.waitForSentRequest(connection: connection, method: "session/new"),
                   let newSessionId = newSessionRequest["id"] as? Int else {
                 return
             }
@@ -397,24 +398,21 @@ final class ServerViewModelTests: XCTestCase {
 
         serverViewModel.sendNewSession()
 
-        let newSessionRequestText = await waitForSentText(
-            connection: connection,
-            matching: { $0.contains("\"method\":\"session/new\"") }
-        )
-        _ = try XCTUnwrap(newSessionRequestText)
+        let newSessionRequestMaybe = await waitForSentRequest(connection: connection, method: "session/new")
+        _ = try XCTUnwrap(newSessionRequestMaybe)
 
         try await Task.sleep(nanoseconds: 100_000_000)
 
         XCTAssertEqual(serverViewModel.sessionId, "server-session-empty")
         XCTAssertEqual(serverViewModel.lastLoadedSession, "server-session-empty")
         XCTAssertTrue(manager.isSessionMaterialized("server-session-empty"))
-        XCTAssertNil(connection.sentTextsSnapshot().first(where: { $0.contains("\"method\":\"session/load\"") }))
+        XCTAssertFalse(hasSentRequest(connection: connection, method: "session/load"))
 
         serverViewModel.openSession("server-session-empty")
 
         try await Task.sleep(nanoseconds: 100_000_000)
 
-        XCTAssertNil(connection.sentTextsSnapshot().first(where: { $0.contains("\"method\":\"session/load\"") }))
+        XCTAssertFalse(hasSentRequest(connection: connection, method: "session/load"))
     }
 
     func testFailedSessionCreationDoesNotSendPromptForPlaceholderSession() async throws {
@@ -434,8 +432,8 @@ final class ServerViewModelTests: XCTestCase {
         manager.setServiceForTesting(service)
 
         Task {
-            guard let initText = await self.waitForSentText(connection: connection, matching: { $0.contains("\"method\":\"initialize\"") }),
-                  let initId = try? self.extractRequest(from: initText)["id"] as? Int else {
+            guard let initRequest = await self.waitForSentRequest(connection: connection, method: "initialize"),
+                  let initId = initRequest["id"] as? Int else {
                 return
             }
             try? self.enqueueResponse(id: initId, result: .object(["status": .string("ok")]), on: connection)
@@ -464,8 +462,7 @@ final class ServerViewModelTests: XCTestCase {
         serverViewModel.sendNewSession()
 
         Task {
-            guard let newSessionText = await self.waitForSentText(connection: connection, matching: { $0.contains("\"method\":\"session/new\"") }),
-                  let newSessionRequest = try? self.extractRequest(from: newSessionText),
+            guard let newSessionRequest = await self.waitForSentRequest(connection: connection, method: "session/new"),
                   let newSessionId = newSessionRequest["id"] as? Int else {
                 return
             }
@@ -478,17 +475,14 @@ final class ServerViewModelTests: XCTestCase {
 
         serverViewModel.sendPrompt(promptText: "hello", images: [])
 
-        let newSessionText = await waitForSentText(
-            connection: connection,
-            matching: { $0.contains("\"method\":\"session/new\"") }
-        )
-        _ = try XCTUnwrap(newSessionText)
+        let newSessionRequestMaybe = await waitForSentRequest(connection: connection, method: "session/new")
+        _ = try XCTUnwrap(newSessionRequestMaybe)
 
         try await Task.sleep(nanoseconds: 100_000_000)
 
         XCTAssertEqual(serverViewModel.sessionId, "")
         XCTAssertNil(serverViewModel.selectedSessionId)
-        XCTAssertNil(connection.sentTextsSnapshot().first(where: { $0.contains("\"method\":\"session/prompt\"") }))
+        XCTAssertFalse(hasSentRequest(connection: connection, method: "session/prompt"))
     }
 
     func testResolvedSessionReplacesPlaceholderInStorageAndPersistsTranscript() async throws {
@@ -508,8 +502,8 @@ final class ServerViewModelTests: XCTestCase {
         manager.setServiceForTesting(service)
 
         Task {
-            guard let initText = await self.waitForSentText(connection: connection, matching: { $0.contains("\"method\":\"initialize\"") }),
-                  let initId = try? self.extractRequest(from: initText)["id"] as? Int else {
+            guard let initRequest = await self.waitForSentRequest(connection: connection, method: "initialize"),
+                  let initId = initRequest["id"] as? Int else {
                 return
             }
             try? self.enqueueResponse(id: initId, result: .object(["status": .string("ok")]), on: connection)
@@ -540,8 +534,7 @@ final class ServerViewModelTests: XCTestCase {
         )
 
         Task {
-            guard let newSessionText = await self.waitForSentText(connection: connection, matching: { $0.contains("\"method\":\"session/new\"") }),
-                  let newSessionRequest = try? self.extractRequest(from: newSessionText),
+            guard let newSessionRequest = await self.waitForSentRequest(connection: connection, method: "session/new"),
                   let newSessionId = newSessionRequest["id"] as? Int else {
                 return
             }
@@ -554,8 +547,7 @@ final class ServerViewModelTests: XCTestCase {
                 on: connection
             )
 
-            guard let promptText = await self.waitForSentText(connection: connection, matching: { $0.contains("\"method\":\"session/prompt\"") }),
-                  let promptRequest = try? self.extractRequest(from: promptText),
+            guard let promptRequest = await self.waitForSentRequest(connection: connection, method: "session/prompt"),
                   let promptId = promptRequest["id"] as? Int else {
                 return
             }
@@ -594,8 +586,9 @@ final class ServerViewModelTests: XCTestCase {
             ),
             forServerId: serverId
         )
+        let restoredSnapshot = [ChatMessage(role: .user, content: "hello from copilot", isStreaming: false)]
         storage.saveMessages(
-            [ChatMessage(role: .user, content: "hello from copilot", isStreaming: false).toStoredInfo()],
+            restoredSnapshot.map { $0.toStoredInfo() },
             forSessionId: "copilot-session-1",
             serverId: serverId
         )
@@ -604,6 +597,7 @@ final class ServerViewModelTests: XCTestCase {
         let defaults = UserDefaults(suiteName: suiteName)!
         defaults.removePersistentDomain(forName: suiteName)
         let manager = ACPClientManager(defaults: defaults, shouldStartNetworkMonitoring: false)
+        let cacheDelegate = StorageBackedCacheDelegate(storage: storage)
 
         let serverViewModel = ServerViewModel(
             id: serverId,
@@ -616,7 +610,7 @@ final class ServerViewModelTests: XCTestCase {
             getService: { nil },
             append: { _ in },
             logWire: { _, _ in },
-            cacheDelegate: StorageBackedCacheDelegate(storage: storage),
+            cacheDelegate: cacheDelegate,
             storage: storage
         )
 
