@@ -1206,10 +1206,10 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
         return candidateToolCallIDs.isSubset(of: existingToolCallIDs)
     }
 
-    private static func isAssistantResumeNodeRepresentedByLocalToolRichMessage(
+    private static func isAssistantResumeNodeRepresentedByLocalToolRichMessage<S: Sequence>(
         candidate: ChatMessage,
-        in existingMessages: [ChatMessage]
-    ) -> Bool {
+        in existingMessages: S
+    ) -> Bool where S.Element == ChatMessage {
         guard candidate.role == .assistant else { return false }
         guard hasRenderableMessagePayload(candidate) else { return false }
         let candidateHasToolCalls = candidate.segments.contains { $0.kind == .toolCall }
@@ -1351,6 +1351,11 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
         mergedKeysById.reserveCapacity(nodes.count)
         var reusedExistingIds: Set<UUID> = []
         reusedExistingIds.reserveCapacity(existingMessages.count)
+        var unmatchedToolRichAssistantMessagesById: [UUID: ChatMessage] = [:]
+        unmatchedToolRichAssistantMessagesById.reserveCapacity(existingMessages.count)
+        for existing in existingMessages where existing.role == .assistant && existing.segments.contains(where: { $0.kind == .toolCall }) {
+            unmatchedToolRichAssistantMessagesById[existing.id] = existing
+        }
         var mergedReusedMessagesById: [UUID: ChatMessage] = [:]
         mergedReusedMessagesById.reserveCapacity(existingMessages.count)
         var reusedMessages = 0
@@ -1378,6 +1383,7 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
                 existing.isError = mergedPayload.isError
                 existing.isStreaming = mergedPayload.isStreaming
                 reusedExistingIds.insert(existing.id)
+                unmatchedToolRichAssistantMessagesById.removeValue(forKey: existing.id)
                 mergedReusedMessagesById[existing.id] = existing
                 mergedKeysById[existing.id] = node.key
                 resolvedNodes.append(
@@ -1389,11 +1395,10 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
                     )
                 )
             } else {
-                let unmatchedExistingMessages = existingMessages.filter { !reusedExistingIds.contains($0.id) }
                 if shouldCarryForwardUnmatchedExisting,
                    Self.isAssistantResumeNodeRepresentedByLocalToolRichMessage(
                        candidate: node.message,
-                       in: unmatchedExistingMessages
+                       in: unmatchedToolRichAssistantMessagesById.values
                    )
                 {
                     trace("merge skip represented assistant key=\(node.key)")
@@ -3795,7 +3800,7 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
             return .commandExecution(id: itemId, command: command, output: output)
         case "filechange", "file", "diff", "patch":
             let (path, changeType, diff) = extractFileChangeDetails(from: obj)
-            appendClosure("Codex fileChange parsed id=\(itemId ?? "nil") path=\(path ?? "nil") type=\(changeType ?? "nil") diffChars=\(diff?.count ?? 0)")
+            trace("parse fileChange id=\(itemId ?? "nil") path=\(path ?? "nil") type=\(changeType ?? "nil") diffChars=\(diff?.count ?? 0)")
             return .fileChange(id: itemId, path: path, changeType: changeType, diff: diff)
         case "toolcall", "tool", "functioncall", "function":
             return parseGenericToolCall(id: itemId, type: type, object: obj)
@@ -3820,7 +3825,7 @@ final class CodexServerViewModel: ObservableObject, Identifiable, ServerViewMode
             }
             if normalizedType.contains("file") || normalizedType.contains("patch") || normalizedType.contains("diff") {
                 let (path, changeType, diff) = extractFileChangeDetails(from: obj)
-                appendClosure("Codex fileChange parsed id=\(itemId ?? "nil") path=\(path ?? "nil") type=\(changeType ?? "nil") diffChars=\(diff?.count ?? 0)")
+                trace("parse fileChange id=\(itemId ?? "nil") path=\(path ?? "nil") type=\(changeType ?? "nil") diffChars=\(diff?.count ?? 0)")
                 return .fileChange(id: itemId, path: path, changeType: changeType, diff: diff)
             }
             if normalizedType.contains("tool") || normalizedType.contains("function") {

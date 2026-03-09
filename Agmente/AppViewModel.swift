@@ -13,6 +13,10 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
     typealias SessionSummary = ACPClientSessionSummary
 
     private static let defaultScheme = "ws"
+    private static let summarizedCodexServerLogMethods: Set<String> = [
+        "thread/read",
+        "thread/resume"
+    ]
 
     // Connection / selection
     @Published var scheme: String = "ws" {
@@ -2249,7 +2253,9 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
         switch message {
         case .response(let response):
             let method = pendingRequests.removeValue(forKey: response.id)
-            append(renderResponse(response, method: method))
+            if shouldAppendStructuredResponseLog(response, method: method) {
+                append(renderResponse(response, method: method))
+            }
 
             if let error = response.errorValue {
                 let errorActions = ACPResponseDispatcher.dispatchError(
@@ -2545,7 +2551,6 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
         case .notification(let notification): label = notification.method
         case .response(let response): label = pendingRequests[response.id]
         }
-        let body = JSONRPCFormatter.compact(message, encoder: encoder)
         if codexSessionLoggingEnabled,
            let serverId = selectedServerId,
            connectedProtocols[serverId] == .codexAppServer {
@@ -2554,11 +2559,16 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
                 await codexSessionLogger.logWire(
                     direction: direction,
                     method: label,
-                    message: body,
+                    acpMessage: message,
                     sessionId: sessionId?.isEmpty == false ? sessionId : nil
                 )
             }
         }
+        if shouldSummarizeServerLog(method: label) {
+            append(summarizedServerLogLine(direction: direction, label: label))
+            return
+        }
+        let body = JSONRPCFormatter.compact(message, encoder: encoder)
         if let label {
             append("\(direction) \(label): \(body)")
         } else {
@@ -2578,7 +2588,6 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
         case .error(let error):
             label = error.id.map(string(from:))
         }
-        let body = ACPMessageFormatter.compact(message, encoder: encoder)
         if codexSessionLoggingEnabled,
            let serverId = selectedServerId,
            connectedProtocols[serverId] == .codexAppServer {
@@ -2587,16 +2596,41 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
                 await codexSessionLogger.logWire(
                     direction: direction,
                     method: label,
-                    message: body,
+                    jsonMessage: message,
                     sessionId: sessionId?.isEmpty == false ? sessionId : nil
                 )
             }
         }
+        if shouldSummarizeServerLog(method: label) {
+            append(summarizedServerLogLine(direction: direction, label: label))
+            return
+        }
+        let body = ACPMessageFormatter.compact(message, encoder: encoder)
         if let label {
             append("\(direction) \(label): \(body)")
         } else {
             append("\(direction) \(body)")
         }
+    }
+
+    private func shouldSummarizeServerLog(method: String?) -> Bool {
+        guard currentConnectedProtocol == .codexAppServer,
+              let method else { return false }
+        return Self.summarizedCodexServerLogMethods.contains(method)
+    }
+
+    private func shouldAppendStructuredResponseLog(_ response: ACP.AnyResponse, method: String?) -> Bool {
+        if response.errorValue != nil {
+            return true
+        }
+        return !shouldSummarizeServerLog(method: method)
+    }
+
+    private func summarizedServerLogLine(direction: String, label: String?) -> String {
+        if let label {
+            return "\(direction) \(label): [payload omitted in Server Logs]"
+        }
+        return "\(direction) [payload omitted in Server Logs]"
     }
 
     private func string(from id: JSONRPCID) -> String {

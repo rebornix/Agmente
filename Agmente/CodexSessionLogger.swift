@@ -79,6 +79,12 @@ actor CodexSessionLogger {
         return encoder
     }()
 
+    private let wireEncoder: JSONEncoder = {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.withoutEscapingSlashes]
+        return encoder
+    }()
+
     private let isoFormatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -195,6 +201,16 @@ actor CodexSessionLogger {
             cwd: nil,
             endpoint: nil
         ))
+    }
+
+    func logWire(direction: String, method: String?, acpMessage: ACPWireMessage, sessionId: String?) {
+        let body = JSONRPCFormatter.compact(acpMessage, encoder: wireEncoder)
+        logWire(direction: direction, method: method, message: body, sessionId: sessionId)
+    }
+
+    func logWire(direction: String, method: String?, jsonMessage: JSONRPCMessage, sessionId: String?) {
+        let body = ACPMessageFormatter.compact(jsonMessage, encoder: wireEncoder)
+        logWire(direction: direction, method: method, message: body, sessionId: sessionId)
     }
 
     func logTurnEvent(type: String, sessionId: String?, turnId: String?) {
