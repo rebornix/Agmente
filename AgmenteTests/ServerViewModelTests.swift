@@ -515,9 +515,10 @@ final class ServerViewModelTests: XCTestCase {
             try? self.enqueueResponse(id: initId, result: .object(["status": .string("ok")]), on: connection)
         }
 
-        XCTAssertTrue(await manager.initializeAndWait(
+        let didInitialize = await manager.initializeAndWait(
             payload: ACPInitializationPayload(clientName: "Agmente iOS", clientVersion: "0.1.0")
-        ))
+        )
+        XCTAssertTrue(didInitialize)
 
         let serverId = UUID()
         let storage = SessionStorage.inMemory()
