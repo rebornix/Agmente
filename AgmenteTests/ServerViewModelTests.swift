@@ -623,4 +623,283 @@ final class ServerViewModelTests: XCTestCase {
         let restoredMessages = try XCTUnwrap(serverViewModel.currentSessionViewModel?.chatMessages)
         XCTAssertEqual(restoredMessages.first?.content, "hello from copilot")
     }
+
+    // MARK: - Session Re-materialization Tests
+
+    func testOpenStoredSessionSendsSessionLoadWhenAgentSupportsIt() async throws {
+        // Simulates: app restart with a persisted session, agent supports session/load.
+        // The session is in Core Data but NOT materialized on the server.
+        // openSession should call session/load to re-materialize.
+        let connection = RecordingWebSocketConnection()
+        let provider = RecordingWebSocketProvider(connection: connection)
+        let client = ACPClient(
+            configuration: .init(endpoint: URL(string: "ws://localhost:1234")!, pingInterval: nil),
+            socketProvider: provider
+        )
+        let service = ACPService(client: client)
+        try await service.connect()
+
+        let suiteName = "ServerViewModelTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        let manager = ACPClientManager(defaults: defaults, shouldStartNetworkMonitoring: false)
+        manager.setServiceForTesting(service)
+
+        // Initialize with loadSession: true
+        Task {
+            guard let initRequest = await self.waitForSentRequest(connection: connection, method: "initialize"),
+                  let initId = initRequest["id"] as? Int else { return }
+            try? self.enqueueResponse(id: initId, result: .object([
+                "protocolVersion": .number(1),
+                "agentCapabilities": .object([
+                    "loadSession": .bool(true)
+                ])
+            ]), on: connection)
+        }
+
+        let initialized = await manager.initializeAndWait(
+            payload: ACPInitializationPayload(clientName: "Agmente iOS", clientVersion: "0.1.0")
+        )
+        XCTAssertTrue(initialized)
+
+        let serverId = UUID()
+        let storage = SessionStorage.inMemory()
+        storage.saveServer(makeStoredServer(id: serverId))
+        storage.saveSession(
+            StoredSessionInfo(sessionId: "stale-session-1", title: "old chat", cwd: "/tmp", updatedAt: Date()),
+            forServerId: serverId
+        )
+        storage.saveMessages(
+            [ChatMessage(role: .user, content: "old message", isStreaming: false).toStoredInfo()],
+            forSessionId: "stale-session-1",
+            serverId: serverId
+        )
+
+        let cacheDelegate = StorageBackedCacheDelegate(storage: storage)
+        let serverViewModel = ServerViewModel(
+            id: serverId,
+            name: "Local",
+            scheme: "ws",
+            host: "localhost:1234",
+            token: "",
+            workingDirectory: "/tmp",
+            connectionManager: manager,
+            getService: { manager.service },
+            append: { _ in },
+            logWire: { _, _ in },
+            cacheDelegate: cacheDelegate,
+            storage: storage
+        )
+
+        // Set agentInfo so canLoadSession() reads the real capability
+        serverViewModel.updateAgentInfo(AgentProfile(
+            id: nil, name: "test-agent", title: "Test", version: "1.0",
+            description: nil, modes: [],
+            capabilities: AgentCapabilityState(loadSession: true),
+            verifications: []
+        ))
+
+        serverViewModel.fetchSessionList()
+        XCTAssertFalse(manager.isSessionMaterialized("stale-session-1"))
+
+        // Enqueue response for session/load
+        Task {
+            guard let loadRequest = await self.waitForSentRequest(connection: connection, method: "session/load"),
+                  let loadId = loadRequest["id"] as? Int else { return }
+            try? self.enqueueResponse(id: loadId, result: .object([:]), on: connection)
+        }
+
+        serverViewModel.openSession("stale-session-1")
+
+        // Verify session/load was sent with the correct session ID
+        let loadRequest = await waitForSentRequest(connection: connection, method: "session/load")
+        XCTAssertNotNil(loadRequest, "session/load should be sent for a stored but non-materialized session")
+        if let params = loadRequest?["params"] as? [String: Any] {
+            XCTAssertEqual(params["sessionId"] as? String, "stale-session-1")
+        }
+    }
+
+    func testOpenStoredSessionSkipsLoadWhenAgentDoesNotSupportIt() async throws {
+        // Agent without session/load capability — should NOT call session/load,
+        // just show cached messages.
+        let connection = RecordingWebSocketConnection()
+        let provider = RecordingWebSocketProvider(connection: connection)
+        let client = ACPClient(
+            configuration: .init(endpoint: URL(string: "ws://localhost:1234")!, pingInterval: nil),
+            socketProvider: provider
+        )
+        let service = ACPService(client: client)
+        try await service.connect()
+
+        let suiteName = "ServerViewModelTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        let manager = ACPClientManager(defaults: defaults, shouldStartNetworkMonitoring: false)
+        manager.setServiceForTesting(service)
+
+        Task {
+            guard let initRequest = await self.waitForSentRequest(connection: connection, method: "initialize"),
+                  let initId = initRequest["id"] as? Int else { return }
+            try? self.enqueueResponse(id: initId, result: .object([
+                "protocolVersion": .number(1),
+                "agentCapabilities": .object([
+                    "loadSession": .bool(false)
+                ])
+            ]), on: connection)
+        }
+
+        let initialized = await manager.initializeAndWait(
+            payload: ACPInitializationPayload(clientName: "Agmente iOS", clientVersion: "0.1.0")
+        )
+        XCTAssertTrue(initialized)
+
+        let serverId = UUID()
+        let storage = SessionStorage.inMemory()
+        storage.saveServer(makeStoredServer(id: serverId))
+        storage.saveSession(
+            StoredSessionInfo(sessionId: "stale-session-2", title: "old chat", cwd: "/tmp", updatedAt: Date()),
+            forServerId: serverId
+        )
+        storage.saveMessages(
+            [ChatMessage(role: .user, content: "cached msg", isStreaming: false).toStoredInfo()],
+            forSessionId: "stale-session-2",
+            serverId: serverId
+        )
+
+        let cacheDelegate = StorageBackedCacheDelegate(storage: storage)
+        let serverViewModel = ServerViewModel(
+            id: serverId,
+            name: "Local",
+            scheme: "ws",
+            host: "localhost:1234",
+            token: "",
+            workingDirectory: "/tmp",
+            connectionManager: manager,
+            getService: { manager.service },
+            append: { _ in },
+            logWire: { _, _ in },
+            cacheDelegate: cacheDelegate,
+            storage: storage
+        )
+
+        serverViewModel.updateAgentInfo(AgentProfile(
+            id: nil, name: "test-agent", title: "Test", version: "1.0",
+            description: nil, modes: [],
+            capabilities: AgentCapabilityState(loadSession: false),
+            verifications: []
+        ))
+
+        serverViewModel.fetchSessionList()
+        serverViewModel.openSession("stale-session-2")
+
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        XCTAssertFalse(hasSentRequest(connection: connection, method: "session/load"),
+                       "session/load must NOT be sent when agent doesn't support it")
+
+        let messages = try XCTUnwrap(serverViewModel.currentSessionViewModel?.chatMessages)
+        XCTAssertFalse(messages.isEmpty, "Cached messages should still be shown")
+    }
+
+    func testSendPromptPreflightCallsSessionLoadForNonMaterializedSession() async throws {
+        // Simulates: session is active but not materialized (e.g., openSession
+        // didn't fire load, or connection was lost and restored). sendPrompt
+        // should call session/load before session/prompt.
+        let connection = RecordingWebSocketConnection()
+        let provider = RecordingWebSocketProvider(connection: connection)
+        let client = ACPClient(
+            configuration: .init(endpoint: URL(string: "ws://localhost:1234")!, pingInterval: nil),
+            socketProvider: provider
+        )
+        let service = ACPService(client: client)
+        try await service.connect()
+
+        let suiteName = "ServerViewModelTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        let manager = ACPClientManager(defaults: defaults, shouldStartNetworkMonitoring: false)
+        manager.setServiceForTesting(service)
+
+        Task {
+            guard let initRequest = await self.waitForSentRequest(connection: connection, method: "initialize"),
+                  let initId = initRequest["id"] as? Int else { return }
+            try? self.enqueueResponse(id: initId, result: .object([
+                "protocolVersion": .number(1),
+                "agentCapabilities": .object([
+                    "loadSession": .bool(true)
+                ])
+            ]), on: connection)
+        }
+
+        let initialized = await manager.initializeAndWait(
+            payload: ACPInitializationPayload(clientName: "Agmente iOS", clientVersion: "0.1.0")
+        )
+        XCTAssertTrue(initialized)
+
+        let serverId = UUID()
+        let storage = SessionStorage.inMemory()
+        storage.saveServer(makeStoredServer(id: serverId))
+
+        let serverViewModel = ServerViewModel(
+            id: serverId,
+            name: "Local",
+            scheme: "ws",
+            host: "localhost:1234",
+            token: "",
+            workingDirectory: "/tmp",
+            connectionManager: manager,
+            getService: { manager.service },
+            append: { _ in },
+            logWire: { _, _ in },
+            cacheDelegate: TestCacheDelegate(),
+            storage: storage
+        )
+
+        serverViewModel.updateAgentInfo(AgentProfile(
+            id: nil, name: "test-agent", title: "Test", version: "1.0",
+            description: nil, modes: [],
+            capabilities: AgentCapabilityState(loadSession: true),
+            verifications: []
+        ))
+
+        // Manually set active session without materializing it — simulates
+        // a session that was set up without going through the normal create flow.
+        serverViewModel.setActiveSession("orphaned-session-1")
+        XCTAssertFalse(manager.isSessionMaterialized("orphaned-session-1"))
+
+        // Enqueue responses for session/load then session/prompt
+        Task {
+            guard let loadRequest = await self.waitForSentRequest(connection: connection, method: "session/load"),
+                  let loadId = loadRequest["id"] as? Int else { return }
+            try? self.enqueueResponse(id: loadId, result: .object([:]), on: connection)
+
+            guard let promptRequest = await self.waitForSentRequest(connection: connection, method: "session/prompt"),
+                  let promptId = promptRequest["id"] as? Int else { return }
+            try? self.enqueueResponse(
+                id: promptId,
+                result: .object(["stopReason": .string("end_turn")]),
+                on: connection
+            )
+        }
+
+        serverViewModel.sendPrompt(promptText: "hello after restart", images: [])
+
+        // Wait for both requests
+        let loadReq = await waitForSentRequest(connection: connection, method: "session/load")
+        let promptReq = await waitForSentRequest(connection: connection, method: "session/prompt")
+        XCTAssertNotNil(loadReq, "session/load preflight should fire for non-materialized session")
+        XCTAssertNotNil(promptReq, "session/prompt should follow session/load")
+
+        // Verify ordering: session/load comes before session/prompt
+        let allRequests = sentRequests(connection: connection)
+        let methods = allRequests.compactMap { $0["method"] as? String }
+        if let loadIdx = methods.firstIndex(of: "session/load"),
+           let promptIdx = methods.firstIndex(of: "session/prompt") {
+            XCTAssertLessThan(loadIdx, promptIdx,
+                              "session/load must be sent before session/prompt")
+        }
+
+        // Verify session is now materialized
+        XCTAssertTrue(manager.isSessionMaterialized("orphaned-session-1"))
+    }
 }

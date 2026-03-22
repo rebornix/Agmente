@@ -1,6 +1,8 @@
 {
     "chat.tools.terminal.autoApprove": {
         "npx -y @rebornix/stdio-to-ws": true,
-        "xcodebuild": true
+        "xcodebuild": true,
+        "xcrun": true,
+        "true": true
     }
 }

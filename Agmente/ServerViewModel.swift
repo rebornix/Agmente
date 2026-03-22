@@ -815,8 +815,22 @@ final class ServerViewModel: ObservableObject, Identifiable, ServerViewModelProt
 
         // If `session/resume` is supported, we reattach on-demand as part of prompt preflight.
 
-        if hasCachedMessages || hasStoredMessages || hasInMemoryState {
-            // Use cache or stored messages, no need to load from server
+        let hasLocalMessages = hasCachedMessages || hasStoredMessages || hasInMemoryState
+
+        if hasLocalMessages && canLoadSession() {
+            // We have locally cached messages, but the session may not be materialized
+            // on the server (e.g., after app restart). Per ACP spec, session/load
+            // replays the full conversation history, so we clear local messages and
+            // let the server replay them.
+            lastLoadedSession = resolvedId
+            pendingSessionLoad = nil
+            if connectionState == .connected, isInitialized {
+                sendLoadSession(resolvedId)
+            } else {
+                pendingSessionLoad = resolvedId
+            }
+        } else if hasLocalMessages {
+            // Agent doesn't support session/load, just show cached messages
             lastLoadedSession = resolvedId
             pendingSessionLoad = nil
         } else if canLoadSession() {
@@ -826,8 +840,6 @@ final class ServerViewModel: ObservableObject, Identifiable, ServerViewModelProt
             } else {
                 // Not connected or not initialized yet - queue for later
                 pendingSessionLoad = resolvedId
-                // Trigger connection and initialization if needed
-                // Note: connectInitializeAndFetchSessions will be moved in a later step
                 if connectionState != .connected {
                     // TODO: Call connectInitializeAndFetchSessions() when it's moved
                 }
@@ -1265,7 +1277,38 @@ final class ServerViewModel: ObservableObject, Identifiable, ServerViewModelProt
                 return
             }
 
-            // Handle session resume if needed
+            // Handle session re-materialization if needed
+            // Try session/load first (for agents that support it), then session/resume
+            if canLoadSession(),
+               !pendingLocalSessions.contains(sessionId),
+               !connectionManager.isSessionMaterialized(sessionId) {
+                let sessionToLoad = sessionId
+                let configuredCwd = sessionSummaries.first(where: { $0.id == sessionToLoad })?.cwd ?? resolvedWorkingDirectory
+                let loadCwd = effectiveWorkingDirectory(configuredCwd)
+
+                let payload = ACPSessionLoadPayload(
+                    sessionId: sessionToLoad,
+                    workingDirectory: loadCwd
+                )
+
+                do {
+                    _ = try await service.loadSession(payload)
+                    connectionManager.markSessionMaterialized(sessionToLoad)
+                } catch {
+                    if case ACPServiceError.rpc(_, let rpcError) = error, rpcError.code == -32601 {
+                        if var info = agentInfo {
+                            info.capabilities.loadSession = false
+                            agentInfo = info
+                        }
+                        appendClosure("session/load disabled for this agent (Method not found)")
+                    } else {
+                        appendClosure("Failed to load session before prompt: \(error)")
+                        failPendingTurn("Failed to load session: \(error.localizedDescription)")
+                        return
+                    }
+                }
+            }
+
             if canLoadSession() == false,
                canResumeSession(),
                !pendingLocalSessions.contains(sessionId),
