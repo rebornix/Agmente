@@ -12,6 +12,12 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
     // `ACP` also defines `SessionSummary`; keep local usages pinned to ACPClient.
     typealias SessionSummary = ACPClientSessionSummary
 
+    private enum ACPRecoveryTrigger: String {
+        case sceneActive
+        case networkRestored
+        case manualRefresh
+    }
+
     private static let defaultScheme = "ws"
     private static let summarizedCodexServerLogMethods: Set<String> = [
         "thread/read",
@@ -221,6 +227,8 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
     private var resumeRefreshTask: Task<Void, Never>?
     private var lastResumeRefreshAt: Date?
     private var pendingNetworkRefresh: Bool = false
+    private let acpRecoveryTriggers = PassthroughSubject<ACPRecoveryTrigger, Never>()
+    private var acpRecoveryCancellable: AnyCancellable?
     private let defaults: UserDefaults
     private let lastServerKey = "Agmente.lastServerId"
     private let devModeKey = "Agmente.devModeEnabled"
@@ -335,6 +343,7 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
 
         // Set ourselves as the delegate after initialization
         self.connectionManager.delegate = self
+        setupACPRecoveryPipeline()
         // Phase 1: Delegates are now set per session view model in createSessionViewModel()
 
         startupLog(
@@ -344,6 +353,31 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
         if shouldConnectOnStartup {
             startupLog("init invoking connectInitializeAndFetchSessions()")
             connectInitializeAndFetchSessions()
+        }
+    }
+
+    private func setupACPRecoveryPipeline() {
+        acpRecoveryCancellable = acpRecoveryTriggers
+            .debounce(for: .milliseconds(250), scheduler: DispatchQueue.main)
+            .sink { [weak self] trigger in
+                Task { @MainActor [weak self] in
+                    self?.startACPRecovery(trigger: trigger)
+                }
+            }
+    }
+
+    private func enqueueACPRecovery(_ trigger: ACPRecoveryTrigger) {
+        acpRecoveryTriggers.send(trigger)
+    }
+
+    private func startACPRecovery(trigger: ACPRecoveryTrigger) {
+        logCodexConnectionEvent("reconnect_attempt")
+
+        resumeRefreshTask?.cancel()
+        resumeRefreshTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.resumeRefreshTask = nil }
+            await self.refreshSessionsAfterResume(trigger: trigger)
         }
     }
 
@@ -1646,14 +1680,7 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
         }
         lastResumeRefreshAt = now
 
-        logCodexConnectionEvent("reconnect_attempt")
-
-        resumeRefreshTask?.cancel()
-        resumeRefreshTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            defer { self.resumeRefreshTask = nil }
-            await self.refreshSessionsAfterResume()
-        }
+        enqueueACPRecovery(.sceneActive)
     }
 
     func initializeAndWait() async -> Bool {
@@ -1685,7 +1712,7 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
     /// This path validates the socket and then forces a session refresh so the UI recovers
     /// without requiring a manual pull-to-refresh.
     @MainActor
-    private func refreshSessionsAfterResume() async {
+    private func refreshSessionsAfterResume(trigger: ACPRecoveryTrigger) async {
         guard isNetworkAvailable else {
             loadCachedSessions()
             return
@@ -1708,13 +1735,23 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
             _ = await initializeAndWait()
         }
 
+        let acpServer = selectedServerViewModel
+        acpServer?.markSelectedSessionStaleAfterReconnect()
+
         let canForceFetch = selectedServerId.map { sessionListSupportFlag(for: $0) != false } ?? true
         fetchSessionList(force: canForceFetch)
 
-        // Fetch models for Codex servers after initialization
         if let codexServer = selectedServerViewModelAny as? CodexServerViewModel {
+            // Fetch models for Codex servers after initialization
             codexServer.fetchModels()
             codexServer.resubscribeActiveSessionAfterReconnect()
+        } else if let acpServer {
+            let recovered = await acpServer.recoverSelectedSessionAfterReconnect()
+            if recovered {
+                startupLog("ACP recovery completed trigger=\(trigger.rawValue) session=\(acpServer.sessionId)")
+            } else {
+                startupLog("ACP recovery left session stale trigger=\(trigger.rawValue) session=\(acpServer.sessionId)")
+            }
         }
     }
 
@@ -2129,7 +2166,7 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
             logCodexConnectionEvent("connection_established")
             if pendingNetworkRefresh {
                 pendingNetworkRefresh = false
-                resumeConnectionIfNeeded()
+                enqueueACPRecovery(.networkRestored)
             }
         case .failed:
             logCodexConnectionEvent("connection_failed")
@@ -2148,7 +2185,7 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
             pendingNetworkRefresh = true
             if connectionState == .connected {
                 pendingNetworkRefresh = false
-                resumeConnectionIfNeeded()
+                enqueueACPRecovery(.networkRestored)
             }
         } else {
             pendingNetworkRefresh = false

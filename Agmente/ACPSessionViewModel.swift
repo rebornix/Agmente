@@ -88,9 +88,17 @@ final class ACPSessionViewModel: ObservableObject {
     private var sessionModeCache: [UUID: [String: String]] = [:] // serverId -> sessionId -> currentModeId
     private var pendingPermissionRequests: [ACP.ID: (sessionId: String, toolCallId: String?)] = [:]
     private var pendingApprovalRequests: [JSONRPCID: String?] = [:]
+    private var replayRecovery: ReplayRecoveryState?
     @Published var activeUserInputRequest: PendingUserInputRequest?
     private var sessionCommandsCache: [UUID: [String: [SessionCommand]]] = [:] // serverId -> sessionId -> available commands
     // Note: chatCache and stopReasonCache moved to AppViewModel (accessed via cacheDelegate)
+
+    private struct ReplayRecoveryState {
+        let serverId: UUID?
+        let sessionId: String
+        let epoch: UUID
+        var bufferedUpdates: [ACP.Value?]
+    }
 
     init(dependencies: Dependencies) {
         self.dependencies = dependencies
@@ -351,10 +359,53 @@ final class ACPSessionViewModel: ObservableObject {
         guard let updateSessionId = ACPSessionUpdateHandler.sessionId(from: params),
               updateSessionId == activeSessionId else { return }
 
+        if replayRecovery?.sessionId == activeSessionId {
+            replayRecovery?.bufferedUpdates.append(params)
+            return
+        }
+
         let events = sessionUpdateHandler.handle(params: params, activeSessionId: activeSessionId)
         for event in events {
-            applySessionUpdateEvent(event, serverId: serverId, sessionId: activeSessionId)
+            applySessionUpdateEvent(event, serverId: serverId, sessionId: activeSessionId, mergeReplay: false)
         }
+    }
+
+    func beginReplayRecovery(serverId: UUID?, sessionId: String) {
+        replayRecovery = ReplayRecoveryState(
+            serverId: serverId,
+            sessionId: sessionId,
+            epoch: UUID(),
+            bufferedUpdates: []
+        )
+    }
+
+    func cancelReplayRecovery(sessionId: String) {
+        guard replayRecovery?.sessionId == sessionId else { return }
+        replayRecovery = nil
+    }
+
+    func completeReplayRecovery(serverId: UUID?, sessionId: String) {
+        guard let recovery = replayRecovery, recovery.sessionId == sessionId else { return }
+        replayRecovery = nil
+
+        for params in recovery.bufferedUpdates {
+            let events = sessionUpdateHandler.handle(params: params, activeSessionId: sessionId)
+            for event in events {
+                applySessionUpdateEvent(
+                    event,
+                    serverId: serverId ?? recovery.serverId,
+                    sessionId: sessionId,
+                    mergeReplay: true
+                )
+            }
+        }
+
+        finishReplayStreamingIfSettled()
+        saveChatState()
+    }
+
+    func isReplayingRecovery(sessionId: String) -> Bool {
+        replayRecovery?.sessionId == sessionId
     }
 
     /// Respond to a pending permission request with the user's choice.
@@ -669,28 +720,30 @@ final class ACPSessionViewModel: ObservableObject {
     private func applySessionUpdateEvent(
         _ event: ACPSessionUpdateEvent,
         serverId: UUID?,
-        sessionId: String
+        sessionId: String,
+        mergeReplay: Bool
     ) {
         switch event {
         case .agentThought(let text):
-            appendAssistantText(text, kind: .thought)
+            appendAssistantText(text, kind: .thought, mergeReplay: mergeReplay)
 
         case .userMessage(let text):
-            appendUserChunk(text)
+            appendUserChunk(text, mergeReplay: mergeReplay)
 
         case .agentMessage(let text):
-            appendAssistantText(text, kind: .message)
+            appendAssistantText(text, kind: .message, mergeReplay: mergeReplay)
 
         case .toolCall(let info):
             appendToolCall(
                 toolCallId: info.toolCallId,
                 title: info.title,
                 kind: info.kind,
-                status: info.status
+                status: info.status,
+                mergeReplay: mergeReplay
             )
 
         case .toolCallUpdate(let update):
-            applyToolCallUpdate(update)
+            applyToolCallUpdate(update, mergeReplay: mergeReplay)
 
         case .modeChange(let modeId):
             currentModeId = modeId
@@ -714,69 +767,79 @@ final class ACPSessionViewModel: ObservableObject {
         }
     }
 
-    private func applyToolCallUpdate(_ update: ACPToolCallUpdate) {
+    private func applyToolCallUpdate(_ update: ACPToolCallUpdate, mergeReplay: Bool = false) {
         guard !chatMessages.isEmpty else { return }
-        let index = ensureStreamingAssistantMessage()
+        let index = mergeReplay ? ensureReplayAssistantMessage() : ensureStreamingAssistantMessage()
 
         var targetIndex: Int?
+        var messageIndex = index
 
-        if let toolCallId = update.toolCallId,
-           let existingIndex = chatMessages[index].segments.firstIndex(where: { segment in
-               segment.kind == .toolCall && segment.toolCall?.toolCallId == toolCallId
-           }) {
+        if mergeReplay,
+           let toolCallId = update.toolCallId,
+           let existing = findToolCallSegment(toolCallId: toolCallId) {
+            messageIndex = existing.messageIndex
+            targetIndex = existing.segmentIndex
+        } else if let toolCallId = update.toolCallId,
+                  let existingIndex = chatMessages[index].segments.firstIndex(where: { segment in
+                      segment.kind == .toolCall && segment.toolCall?.toolCallId == toolCallId
+                  }) {
             targetIndex = existingIndex
         } else if let toolCallId = update.toolCallId, let title = update.title, !title.isEmpty {
             let display = ToolCallDisplay(toolCallId: toolCallId, title: title, kind: update.kind, status: update.status)
-            chatMessages[index].segments.append(AssistantSegment(kind: .toolCall, text: title, toolCall: display))
-            targetIndex = chatMessages[index].segments.indices.last
-        } else if let fallbackIndex = chatMessages[index].segments.lastIndex(where: { $0.kind == .toolCall }) {
+            chatMessages[messageIndex].segments.append(AssistantSegment(kind: .toolCall, text: title, toolCall: display))
+            targetIndex = chatMessages[messageIndex].segments.indices.last
+        } else if let fallbackIndex = chatMessages[messageIndex].segments.lastIndex(where: { $0.kind == .toolCall }) {
             let incomingTitle = update.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             let incomingKind = update.kind?.trimmingCharacters(in: .whitespacesAndNewlines)
-            let existingTitle = chatMessages[index].segments[fallbackIndex].toolCall?.title.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let existingKind = chatMessages[index].segments[fallbackIndex].toolCall?.kind?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let existingTitle = chatMessages[messageIndex].segments[fallbackIndex].toolCall?.title.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let existingKind = chatMessages[messageIndex].segments[fallbackIndex].toolCall?.kind?.trimmingCharacters(in: .whitespacesAndNewlines)
             let titleDiffers = !incomingTitle.isEmpty && incomingTitle != existingTitle
             let kindDiffers = incomingKind != nil && incomingKind != existingKind
 
             if titleDiffers || kindDiffers {
                 if !incomingTitle.isEmpty {
                     let display = ToolCallDisplay(toolCallId: update.toolCallId, title: incomingTitle, kind: update.kind, status: update.status)
-                    chatMessages[index].segments.append(AssistantSegment(kind: .toolCall, text: incomingTitle, toolCall: display))
-                    targetIndex = chatMessages[index].segments.indices.last
+                    chatMessages[messageIndex].segments.append(AssistantSegment(kind: .toolCall, text: incomingTitle, toolCall: display))
+                    targetIndex = chatMessages[messageIndex].segments.indices.last
                 }
             } else {
                 targetIndex = fallbackIndex
             }
         } else if let title = update.title, !title.isEmpty {
             let display = ToolCallDisplay(toolCallId: update.toolCallId, title: title, kind: update.kind, status: update.status)
-            chatMessages[index].segments.append(AssistantSegment(kind: .toolCall, text: title, toolCall: display))
-            targetIndex = chatMessages[index].segments.indices.last
+            chatMessages[messageIndex].segments.append(AssistantSegment(kind: .toolCall, text: title, toolCall: display))
+            targetIndex = chatMessages[messageIndex].segments.indices.last
         }
 
         guard let resolvedIndex = targetIndex else { return }
 
-        if var toolCall = chatMessages[index].segments[resolvedIndex].toolCall {
+        if var toolCall = chatMessages[messageIndex].segments[resolvedIndex].toolCall {
             toolCall.status = update.status ?? toolCall.status
             toolCall.kind = update.kind ?? toolCall.kind
             toolCall.title = update.title ?? toolCall.title
-            chatMessages[index].segments[resolvedIndex].toolCall = toolCall
+            chatMessages[messageIndex].segments[resolvedIndex].toolCall = toolCall
             if let title = update.title, !title.isEmpty {
-                chatMessages[index].segments[resolvedIndex].text = title
+                chatMessages[messageIndex].segments[resolvedIndex].text = title
             }
         }
 
         if let output = update.output {
-            chatMessages[index].segments[resolvedIndex].toolCall?.output = output
+            chatMessages[messageIndex].segments[resolvedIndex].toolCall?.output = output
         }
 
-        rebuildAssistantContent(at: index)
+        rebuildAssistantContent(at: messageIndex)
         saveChatState()
     }
 
-    private func appendUserChunk(_ text: String) {
+    private func appendUserChunk(_ text: String, mergeReplay: Bool = false) {
         guard !text.isEmpty else { return }
 
         let sanitized = ChatMessage.sanitizedUserContent(text)
         let didStrip = sanitized != text
+
+        if mergeReplay, replayUserChunkAlreadyPresent(sanitized) {
+            return
+        }
 
         if streamingMessageId != nil {
             if let streamingIndex = chatMessages.firstIndex(where: { $0.id == streamingMessageId }),
@@ -801,9 +864,9 @@ final class ACPSessionViewModel: ObservableObject {
         saveChatState()
     }
 
-    func appendAssistantText(_ text: String, kind: AssistantSegment.Kind) {
+    func appendAssistantText(_ text: String, kind: AssistantSegment.Kind, mergeReplay: Bool = false) {
         guard !text.isEmpty else { return }
-        let index = ensureStreamingAssistantMessage()
+        let index = mergeReplay ? ensureReplayAssistantMessage() : ensureStreamingAssistantMessage()
 
         if kind == .message, chatMessages[index].segments.isEmpty {
             let existing = chatMessages[index].content.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -820,9 +883,15 @@ final class ACPSessionViewModel: ObservableObject {
             let lastText = chatMessages[index].segments[lastIndex].text
             if lastText.hasSuffix("characters)") {
                 chatMessages[index].segments.append(AssistantSegment(kind: kind, text: text))
+            } else if mergeReplay {
+                appendReplayText(text, toSegmentAt: lastIndex, messageIndex: index)
             } else {
                 chatMessages[index].segments[lastIndex].text.append(text)
             }
+        } else if mergeReplay,
+                  let existingIndex = chatMessages[index].segments.lastIndex(where: { $0.kind == kind && $0.toolCall == nil }),
+                  replayTextAlreadyPresent(text, in: chatMessages[index].segments[existingIndex].text) {
+            return
         } else {
             chatMessages[index].segments.append(AssistantSegment(kind: kind, text: text))
         }
@@ -876,12 +945,25 @@ final class ACPSessionViewModel: ObservableObject {
         applyToolCallUpdate(update)
     }
 
-    private func appendToolCall(toolCallId: String?, title: String, kind: String?, status: String) {
-        let index = ensureStreamingAssistantMessage()
+    private func appendToolCall(toolCallId: String?, title: String, kind: String?, status: String, mergeReplay: Bool = false) {
+        let index = mergeReplay ? ensureReplayAssistantMessage() : ensureStreamingAssistantMessage()
+        var messageIndex = index
 
-        if let toolCallId = toolCallId,
-           let existingIndex = chatMessages[index].segments.firstIndex(where: { $0.toolCall?.toolCallId == toolCallId }) {
-            var existingSegment = chatMessages[index].segments[existingIndex]
+        let existingLocation: (messageIndex: Int, segmentIndex: Int)?
+        if mergeReplay, let toolCallId {
+            existingLocation = findToolCallSegment(toolCallId: toolCallId)
+        } else if let toolCallId,
+                  let existingIndex = chatMessages[index].segments.firstIndex(where: { $0.toolCall?.toolCallId == toolCallId }) {
+            existingLocation = (index, existingIndex)
+        } else if mergeReplay {
+            existingLocation = findReplayToolCall(title: title, kind: kind, preferredMessageIndex: index)
+        } else {
+            existingLocation = nil
+        }
+
+        if let existingLocation {
+            messageIndex = existingLocation.messageIndex
+            var existingSegment = chatMessages[messageIndex].segments[existingLocation.segmentIndex]
             if var existingToolCall = existingSegment.toolCall {
                 if !title.isEmpty {
                     existingToolCall.title = title
@@ -899,13 +981,13 @@ final class ACPSessionViewModel: ObservableObject {
                     summary = existingToolCall.title
                 }
                 existingSegment.text = summary
-                chatMessages[index].segments[existingIndex] = existingSegment
+                chatMessages[messageIndex].segments[existingLocation.segmentIndex] = existingSegment
 
                 if status == "in_progress" || status == "pending" {
-                    chatMessages[index].isStreaming = true
+                    chatMessages[messageIndex].isStreaming = true
                 }
 
-                rebuildAssistantContent(at: index)
+                rebuildAssistantContent(at: messageIndex)
                 saveChatState()
                 return
             }
@@ -918,14 +1000,119 @@ final class ACPSessionViewModel: ObservableObject {
             summary = title
         }
         let toolCall = ToolCallDisplay(toolCallId: toolCallId, title: title, kind: kind, status: status)
-        chatMessages[index].segments.append(AssistantSegment(kind: .toolCall, text: summary, toolCall: toolCall))
+        chatMessages[messageIndex].segments.append(AssistantSegment(kind: .toolCall, text: summary, toolCall: toolCall))
 
         if status == "in_progress" || status == "pending" {
-            chatMessages[index].isStreaming = true
+            chatMessages[messageIndex].isStreaming = true
         }
 
-        rebuildAssistantContent(at: index)
+        rebuildAssistantContent(at: messageIndex)
         saveChatState()
+    }
+
+    private func ensureReplayAssistantMessage() -> Int {
+        if let streamingId = streamingMessageId,
+           let index = chatMessages.firstIndex(where: { $0.id == streamingId && $0.role == .assistant }) {
+            return index
+        }
+        if let index = chatMessages.indices.last(where: { chatMessages[$0].role == .assistant }) {
+            streamingMessageId = chatMessages[index].id
+            return index
+        }
+        return ensureStreamingAssistantMessage()
+    }
+
+    private func findToolCallSegment(toolCallId: String) -> (messageIndex: Int, segmentIndex: Int)? {
+        for messageIndex in chatMessages.indices {
+            guard chatMessages[messageIndex].role == .assistant else { continue }
+            if let segmentIndex = chatMessages[messageIndex].segments.firstIndex(where: { $0.toolCall?.toolCallId == toolCallId }) {
+                return (messageIndex, segmentIndex)
+            }
+        }
+        return nil
+    }
+
+    private func findReplayToolCall(title: String, kind: String?, preferredMessageIndex: Int) -> (messageIndex: Int, segmentIndex: Int)? {
+        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedKind = kind?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedTitle.isEmpty else { return nil }
+
+        func matches(_ toolCall: ToolCallDisplay?) -> Bool {
+            guard let toolCall else { return false }
+            let existingTitle = toolCall.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            let existingKind = toolCall.kind?.trimmingCharacters(in: .whitespacesAndNewlines)
+            return existingTitle == trimmedTitle && (trimmedKind == nil || existingKind == trimmedKind)
+        }
+
+        if chatMessages.indices.contains(preferredMessageIndex),
+           let segmentIndex = chatMessages[preferredMessageIndex].segments.firstIndex(where: { matches($0.toolCall) }) {
+            return (preferredMessageIndex, segmentIndex)
+        }
+
+        for messageIndex in chatMessages.indices.reversed() {
+            guard chatMessages[messageIndex].role == .assistant else { continue }
+            if let segmentIndex = chatMessages[messageIndex].segments.firstIndex(where: { matches($0.toolCall) }) {
+                return (messageIndex, segmentIndex)
+            }
+        }
+        return nil
+    }
+
+    private func replayUserChunkAlreadyPresent(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return true }
+        return chatMessages.contains { message in
+            guard message.role == .user else { return false }
+            let existing = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
+            return existing == trimmed || existing.contains(trimmed)
+        }
+    }
+
+    private func replayTextAlreadyPresent(_ incoming: String, in existing: String) -> Bool {
+        guard !incoming.isEmpty else { return true }
+        return existing == incoming || existing.hasSuffix(incoming) || existing.contains(incoming)
+    }
+
+    private func appendReplayText(_ incoming: String, toSegmentAt segmentIndex: Int, messageIndex: Int) {
+        let existing = chatMessages[messageIndex].segments[segmentIndex].text
+        guard !replayTextAlreadyPresent(incoming, in: existing) else { return }
+        if incoming.hasPrefix(existing) {
+            chatMessages[messageIndex].segments[segmentIndex].text = incoming
+            return
+        }
+
+        let overlap = suffixPrefixOverlap(existing, incoming)
+        let start = incoming.index(incoming.startIndex, offsetBy: overlap)
+        chatMessages[messageIndex].segments[segmentIndex].text.append(String(incoming[start...]))
+    }
+
+    private func suffixPrefixOverlap(_ existing: String, _ incoming: String) -> Int {
+        let maxLength = min(existing.count, incoming.count)
+        guard maxLength > 0 else { return 0 }
+        for length in stride(from: maxLength, through: 1, by: -1) {
+            let existingSuffix = existing.suffix(length)
+            let incomingPrefix = incoming.prefix(length)
+            if existingSuffix == incomingPrefix {
+                return length
+            }
+        }
+        return 0
+    }
+
+    private func finishReplayStreamingIfSettled() {
+        guard let streamingId = streamingMessageId,
+              let index = chatMessages.firstIndex(where: { $0.id == streamingId && $0.role == .assistant }) else {
+            return
+        }
+
+        let hasActiveTool = chatMessages[index].segments.contains { segment in
+            guard segment.kind == .toolCall else { return false }
+            let status = segment.toolCall?.status?.lowercased()
+            return status == "pending" || status == "in_progress" || status == "awaiting_permission"
+        }
+        if !hasActiveTool {
+            finishStreamingMessage()
+        }
     }
 
     func ensureStreamingAssistantMessage() -> Int {
@@ -1146,7 +1333,9 @@ final class ACPSessionViewModel: ObservableObject {
 
     /// Handle session load completion.
     func handleSessionLoadCompleted(serverId: UUID, sessionId: String) {
-        finishStreamingMessage()
+        if !isReplayingRecovery(sessionId: sessionId) {
+            finishStreamingMessage()
+        }
         // Notify delegate
         eventDelegate?.sessionLoadDidComplete(serverId: serverId, sessionId: sessionId)
     }

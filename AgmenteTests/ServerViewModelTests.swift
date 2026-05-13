@@ -902,4 +902,207 @@ final class ServerViewModelTests: XCTestCase {
         // Verify session is now materialized
         XCTAssertTrue(manager.isSessionMaterialized("orphaned-session-1"))
     }
+
+    func testReconnectRecoveryLoadsSelectedACPSessionAndClearsStaleState() async throws {
+        let connection = RecordingWebSocketConnection()
+        let provider = RecordingWebSocketProvider(connection: connection)
+        let client = ACPClient(
+            configuration: .init(endpoint: URL(string: "ws://localhost:1234")!, pingInterval: nil),
+            socketProvider: provider
+        )
+        let service = ACPService(client: client)
+        try await service.connect()
+
+        let suiteName = "ServerViewModelTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        let manager = ACPClientManager(defaults: defaults, shouldStartNetworkMonitoring: false)
+        manager.setServiceForTesting(service)
+
+        Task {
+            guard let initRequest = await self.waitForSentRequest(connection: connection, method: "initialize"),
+                  let initId = initRequest["id"] as? Int else { return }
+            try? self.enqueueResponse(id: initId, result: .object([
+                "protocolVersion": .number(1),
+                "agentCapabilities": .object([
+                    "loadSession": .bool(true)
+                ])
+            ]), on: connection)
+        }
+
+        let initialized = await manager.initializeAndWait(
+            payload: ACPInitializationPayload(clientName: "Agmente iOS", clientVersion: "0.1.0")
+        )
+        XCTAssertTrue(initialized)
+
+        let serverViewModel = ServerViewModel(
+            id: UUID(),
+            name: "Local",
+            scheme: "ws",
+            host: "localhost:1234",
+            token: "",
+            workingDirectory: "/tmp",
+            connectionManager: manager,
+            getService: { manager.service },
+            append: { _ in },
+            logWire: { _, _ in },
+            cacheDelegate: TestCacheDelegate(),
+            storage: SessionStorage.inMemory()
+        )
+        serverViewModel.updateAgentInfo(AgentProfile(
+            id: nil, name: "test-agent", title: "Test", version: "1.0",
+            description: nil, modes: [],
+            capabilities: AgentCapabilityState(loadSession: true),
+            verifications: []
+        ))
+        serverViewModel.setActiveSession("recoverable-session")
+        manager.resetSessionState()
+
+        serverViewModel.markSelectedSessionStaleAfterReconnect()
+        XCTAssertTrue(serverViewModel.isCurrentSessionStale)
+        XCTAssertFalse(manager.isSessionMaterialized("recoverable-session"))
+
+        Task {
+            guard let loadRequest = await self.waitForSentRequest(connection: connection, method: "session/load"),
+                  let loadId = loadRequest["id"] as? Int else { return }
+            try? self.enqueueResponse(id: loadId, result: .object([:]), on: connection)
+        }
+
+        let recovered = await serverViewModel.recoverSelectedSessionAfterReconnect()
+
+        XCTAssertTrue(recovered)
+        XCTAssertFalse(serverViewModel.isCurrentSessionStale)
+        XCTAssertFalse(serverViewModel.isCurrentSessionSyncing)
+        XCTAssertFalse(serverViewModel.isCurrentSessionLocalOnly)
+        XCTAssertTrue(manager.isSessionMaterialized("recoverable-session"))
+        XCTAssertEqual(serverViewModel.lastLoadedSession, "recoverable-session")
+        let loadRequest = await waitForSentRequest(connection: connection, method: "session/load")
+        XCTAssertNotNil(loadRequest)
+    }
+
+    func testReconnectRecoveryKeepsCachedTranscriptVisibleWhileSessionLoadIsInFlight() async throws {
+        let connection = RecordingWebSocketConnection()
+        let provider = RecordingWebSocketProvider(connection: connection)
+        let client = ACPClient(
+            configuration: .init(endpoint: URL(string: "ws://localhost:1234")!, pingInterval: nil),
+            socketProvider: provider
+        )
+        let service = ACPService(client: client)
+        try await service.connect()
+
+        let suiteName = "ServerViewModelTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        let manager = ACPClientManager(defaults: defaults, shouldStartNetworkMonitoring: false)
+        manager.setServiceForTesting(service)
+
+        Task {
+            guard let initRequest = await self.waitForSentRequest(connection: connection, method: "initialize"),
+                  let initId = initRequest["id"] as? Int else { return }
+            try? self.enqueueResponse(id: initId, result: .object([
+                "protocolVersion": .number(1),
+                "agentCapabilities": .object([
+                    "loadSession": .bool(true)
+                ])
+            ]), on: connection)
+        }
+
+        let initialized = await manager.initializeAndWait(
+            payload: ACPInitializationPayload(clientName: "Agmente iOS", clientVersion: "0.1.0")
+        )
+        XCTAssertTrue(initialized)
+
+        let serverViewModel = ServerViewModel(
+            id: UUID(),
+            name: "Local",
+            scheme: "ws",
+            host: "localhost:1234",
+            token: "",
+            workingDirectory: "/tmp",
+            connectionManager: manager,
+            getService: { manager.service },
+            append: { _ in },
+            logWire: { _, _ in },
+            cacheDelegate: TestCacheDelegate(),
+            storage: SessionStorage.inMemory()
+        )
+        serverViewModel.updateAgentInfo(AgentProfile(
+            id: nil, name: "test-agent", title: "Test", version: "1.0",
+            description: nil, modes: [],
+            capabilities: AgentCapabilityState(loadSession: true),
+            verifications: []
+        ))
+        serverViewModel.setActiveSession("visible-session")
+        serverViewModel.currentSessionViewModel?.addUserMessage(content: "Still visible", images: [])
+        manager.resetSessionState()
+        serverViewModel.markSelectedSessionStaleAfterReconnect()
+
+        let recoveryTask = Task { @MainActor in
+            await serverViewModel.recoverSelectedSessionAfterReconnect()
+        }
+
+        guard let loadRequest = await waitForSentRequest(connection: connection, method: "session/load"),
+              let loadId = loadRequest["id"] as? Int else {
+            XCTFail("Expected session/load request")
+            return
+        }
+
+        let inFlightMessages = try XCTUnwrap(serverViewModel.currentSessionViewModel?.chatMessages)
+        XCTAssertEqual(inFlightMessages.count, 1)
+        XCTAssertEqual(inFlightMessages.first?.content, "Still visible")
+
+        try enqueueResponse(id: loadId, result: .object([:]), on: connection)
+        let recovered = await recoveryTask.value
+
+        XCTAssertTrue(recovered)
+        XCTAssertEqual(serverViewModel.currentSessionViewModel?.chatMessages.first?.content, "Still visible")
+    }
+
+    func testReconnectRecoveryMarksSelectedACPSessionLocalOnlyWhenLoadUnsupported() async throws {
+        let connection = RecordingWebSocketConnection()
+        let provider = RecordingWebSocketProvider(connection: connection)
+        let client = ACPClient(
+            configuration: .init(endpoint: URL(string: "ws://localhost:1234")!, pingInterval: nil),
+            socketProvider: provider
+        )
+        let service = ACPService(client: client)
+        try await service.connect()
+
+        let suiteName = "ServerViewModelTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        let manager = ACPClientManager(defaults: defaults, shouldStartNetworkMonitoring: false)
+        manager.setServiceForTesting(service)
+
+        let serverViewModel = ServerViewModel(
+            id: UUID(),
+            name: "Local",
+            scheme: "ws",
+            host: "localhost:1234",
+            token: "",
+            workingDirectory: "/tmp",
+            connectionManager: manager,
+            getService: { manager.service },
+            append: { _ in },
+            logWire: { _, _ in },
+            cacheDelegate: TestCacheDelegate(),
+            storage: SessionStorage.inMemory()
+        )
+        serverViewModel.updateAgentInfo(AgentProfile(
+            id: nil, name: "test-agent", title: "Test", version: "1.0",
+            description: nil, modes: [],
+            capabilities: AgentCapabilityState(loadSession: false),
+            verifications: []
+        ))
+        serverViewModel.setActiveSession("local-only-session")
+        serverViewModel.markSelectedSessionStaleAfterReconnect()
+
+        let recovered = await serverViewModel.recoverSelectedSessionAfterReconnect()
+
+        XCTAssertTrue(recovered)
+        XCTAssertFalse(serverViewModel.isCurrentSessionStale)
+        XCTAssertFalse(serverViewModel.isCurrentSessionSyncing)
+        XCTAssertTrue(serverViewModel.isCurrentSessionLocalOnly)
+        XCTAssertFalse(hasSentRequest(connection: connection, method: "session/load"))
+    }
 }

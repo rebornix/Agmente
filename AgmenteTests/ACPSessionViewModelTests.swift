@@ -140,6 +140,13 @@ final class ACPSessionViewModelTests: XCTestCase {
         return viewModel
     }
 
+    private func makeSessionUpdateParams(sessionId: String, update: [String: ACP.Value]) -> ACP.Value {
+        .object([
+            "sessionId": .string(sessionId),
+            "update": .object(update),
+        ])
+    }
+
     private func resetTestState() {
         appendMessages = []
         wireMessages = []
@@ -199,6 +206,128 @@ final class ACPSessionViewModelTests: XCTestCase {
 
         // Verify no save occurred
         XCTAssertTrue(cacheDelegate.saveCalls.isEmpty, "Should not save without session context")
+    }
+
+    func testReplayRecoveryBuffersUpdatesUntilCompleted() {
+        let viewModel = makeViewModel()
+        let serverId = UUID()
+        let sessionId = "recovering-session"
+        viewModel.setSessionContext(serverId: serverId, sessionId: sessionId)
+        viewModel.addUserMessage(content: "What changed?", images: [])
+
+        viewModel.beginReplayRecovery(serverId: serverId, sessionId: sessionId)
+        viewModel.handleSessionUpdateEvents(
+            makeSessionUpdateParams(sessionId: sessionId, update: [
+                "sessionUpdate": .string("agent_message_chunk"),
+                "content": .object(["type": .string("text"), "text": .string("A replayed answer")]),
+            ]),
+            activeSessionId: sessionId,
+            serverId: serverId
+        )
+
+        XCTAssertEqual(viewModel.chatMessages.count, 1)
+        XCTAssertEqual(viewModel.chatMessages.first?.role, .user)
+
+        viewModel.completeReplayRecovery(serverId: serverId, sessionId: sessionId)
+
+        XCTAssertEqual(viewModel.chatMessages.count, 2)
+        XCTAssertEqual(viewModel.chatMessages.last?.role, .assistant)
+        XCTAssertEqual(viewModel.chatMessages.last?.content, "A replayed answer")
+    }
+
+    func testReplayRecoveryMergesAssistantPrefixWithoutDuplicatingText() {
+        let viewModel = makeViewModel()
+        let serverId = UUID()
+        let sessionId = "merge-text-session"
+        viewModel.setSessionContext(serverId: serverId, sessionId: sessionId)
+        viewModel.addUserMessage(content: "Explain", images: [])
+        viewModel.appendAssistantText("Hello", kind: .message)
+
+        viewModel.beginReplayRecovery(serverId: serverId, sessionId: sessionId)
+        viewModel.handleSessionUpdateEvents(
+            makeSessionUpdateParams(sessionId: sessionId, update: [
+                "sessionUpdate": .string("agent_message_chunk"),
+                "content": .object(["type": .string("text"), "text": .string("Hello world")]),
+            ]),
+            activeSessionId: sessionId,
+            serverId: serverId
+        )
+        viewModel.completeReplayRecovery(serverId: serverId, sessionId: sessionId)
+
+        let assistant = viewModel.chatMessages.last
+        XCTAssertEqual(assistant?.role, .assistant)
+        XCTAssertEqual(assistant?.content, "Hello world")
+        XCTAssertEqual(assistant?.segments.filter { $0.kind == .message }.count, 1)
+    }
+
+    func testReplayRecoveryMergesToolCallAndUpdateWithoutDuplicateSegments() {
+        let viewModel = makeViewModel()
+        let serverId = UUID()
+        let sessionId = "merge-tool-session"
+        let toolCallId = "tool-1"
+        viewModel.setSessionContext(serverId: serverId, sessionId: sessionId)
+        viewModel.handleSessionUpdateEvents(
+            makeSessionUpdateParams(sessionId: sessionId, update: [
+                "sessionUpdate": .string("tool_call"),
+                "toolCallId": .string(toolCallId),
+                "title": .string("`git status`"),
+                "kind": .string("execute"),
+                "status": .string("pending"),
+            ]),
+            activeSessionId: sessionId,
+            serverId: serverId
+        )
+
+        viewModel.beginReplayRecovery(serverId: serverId, sessionId: sessionId)
+        viewModel.handleSessionUpdateEvents(
+            makeSessionUpdateParams(sessionId: sessionId, update: [
+                "sessionUpdate": .string("tool_call"),
+                "toolCallId": .string(toolCallId),
+                "title": .string("`git status`"),
+                "kind": .string("execute"),
+                "status": .string("in_progress"),
+            ]),
+            activeSessionId: sessionId,
+            serverId: serverId
+        )
+        viewModel.handleSessionUpdateEvents(
+            makeSessionUpdateParams(sessionId: sessionId, update: [
+                "sessionUpdate": .string("tool_call_update"),
+                "toolCallId": .string(toolCallId),
+                "status": .string("completed"),
+                "rawOutput": .string("clean"),
+            ]),
+            activeSessionId: sessionId,
+            serverId: serverId
+        )
+        viewModel.completeReplayRecovery(serverId: serverId, sessionId: sessionId)
+
+        let toolSegments = viewModel.chatMessages.flatMap(\.segments).filter { $0.kind == .toolCall }
+        XCTAssertEqual(toolSegments.count, 1)
+        XCTAssertEqual(toolSegments.first?.toolCall?.status, "completed")
+        XCTAssertEqual(toolSegments.first?.toolCall?.output, "clean")
+    }
+
+    func testReplayRecoverySkipsDuplicateUserChunks() {
+        let viewModel = makeViewModel()
+        let serverId = UUID()
+        let sessionId = "merge-user-session"
+        viewModel.setSessionContext(serverId: serverId, sessionId: sessionId)
+        viewModel.addUserMessage(content: "List files", images: [])
+
+        viewModel.beginReplayRecovery(serverId: serverId, sessionId: sessionId)
+        viewModel.handleSessionUpdateEvents(
+            makeSessionUpdateParams(sessionId: sessionId, update: [
+                "sessionUpdate": .string("user_message_chunk"),
+                "content": .object(["type": .string("text"), "text": .string("List files")]),
+            ]),
+            activeSessionId: sessionId,
+            serverId: serverId
+        )
+        viewModel.completeReplayRecovery(serverId: serverId, sessionId: sessionId)
+
+        XCTAssertEqual(viewModel.chatMessages.filter { $0.role == .user }.count, 1)
+        XCTAssertEqual(viewModel.chatMessages.first?.content, "List files")
     }
 
     func testLoadChatState_FromCache_LoadsSuccessfully() {

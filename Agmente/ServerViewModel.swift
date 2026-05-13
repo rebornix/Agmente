@@ -52,6 +52,9 @@ final class ServerViewModel: ObservableObject, Identifiable, ServerViewModelProt
     @Published var sessionSummaries: [SessionSummary] = []
     @Published var selectedSessionId: String?
     @Published var sessionId: String = ""
+    @Published private(set) var staleSessionIds: Set<String> = []
+    @Published private(set) var syncingSessionIds: Set<String> = []
+    @Published private(set) var localOnlySessionIds: Set<String> = []
 
     /// Returns the SessionViewModel for the currently selected session.
     var currentSessionViewModel: ACPSessionViewModel? {
@@ -73,6 +76,21 @@ final class ServerViewModel: ObservableObject, Identifiable, ServerViewModelProt
     /// True when the active session hasn't been materialized on the server yet.
     var isPendingSession: Bool {
         pendingLocalSessions.contains(sessionId)
+    }
+
+    var isCurrentSessionStale: Bool {
+        guard !sessionId.isEmpty else { return false }
+        return staleSessionIds.contains(sessionId)
+    }
+
+    var isCurrentSessionSyncing: Bool {
+        guard !sessionId.isEmpty else { return false }
+        return syncingSessionIds.contains(sessionId)
+    }
+
+    var isCurrentSessionLocalOnly: Bool {
+        guard !sessionId.isEmpty else { return false }
+        return localOnlySessionIds.contains(sessionId)
     }
 
     // MARK: - Agent Info & Modes
@@ -725,19 +743,48 @@ final class ServerViewModel: ObservableObject, Identifiable, ServerViewModelProt
 
     /// Load a session from the server using session/load.
     func sendLoadSession(_ sessionIdToLoad: String, cwd: String? = nil) {
+        guard canLoadSession() else {
+            appendClosure("Agent does not support session/load; showing cached messages only")
+            pendingSessionLoad = nil
+            staleSessionIds.remove(sessionIdToLoad)
+            syncingSessionIds.remove(sessionIdToLoad)
+            localOnlySessionIds.insert(sessionIdToLoad)
+            return
+        }
+
+        Task { @MainActor [weak self] in
+            await self?.loadSessionFromServer(sessionIdToLoad, cwd: cwd, markSyncing: false)
+        }
+        pendingSessionLoad = nil
+    }
+
+    @discardableResult
+    private func loadSessionFromServer(
+        _ sessionIdToLoad: String,
+        cwd: String? = nil,
+        markSyncing: Bool
+    ) async -> Bool {
         guard let service = getServiceClosure() else {
             appendClosure("Not connected")
-            return
+            return false
         }
         guard canLoadSession() else {
             appendClosure("Agent does not support session/load; showing cached messages only")
             pendingSessionLoad = nil
-            return
+            staleSessionIds.remove(sessionIdToLoad)
+            syncingSessionIds.remove(sessionIdToLoad)
+            localOnlySessionIds.insert(sessionIdToLoad)
+            return false
         }
 
-        // Clear messages before loading from server - the server will replay history.
-        currentSessionViewModel?.setChatMessages([])
-        currentSessionViewModel?.resetStreamingState()
+        if markSyncing {
+            syncingSessionIds.insert(sessionIdToLoad)
+        }
+        defer {
+            if markSyncing {
+                syncingSessionIds.remove(sessionIdToLoad)
+            }
+        }
 
         // Determine the correct CWD for this session
         let sessionCwd: String
@@ -756,26 +803,89 @@ final class ServerViewModel: ObservableObject, Identifiable, ServerViewModelProt
             workingDirectory: effectiveCwd
         )
 
-        Task { @MainActor in
-            do {
-                _ = try await service.loadSession(payload)
-            } catch {
-                if case ACPServiceError.rpc(_, let rpcError) = error, rpcError.code == -32601 {
-                    if var info = agentInfo {
-                        info.capabilities.loadSession = false
-                        agentInfo = info
-                    }
-                    appendClosure("session/load disabled for this agent (Method not found)")
+        currentSessionViewModel?.beginReplayRecovery(serverId: id, sessionId: sessionIdToLoad)
+
+        do {
+            _ = try await service.loadSession(payload)
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            currentSessionViewModel?.completeReplayRecovery(serverId: id, sessionId: sessionIdToLoad)
+            connectionManager.markSessionMaterialized(sessionIdToLoad)
+            lastLoadedSession = sessionIdToLoad
+            pendingSessionLoad = nil
+            staleSessionIds.remove(sessionIdToLoad)
+            localOnlySessionIds.remove(sessionIdToLoad)
+            return true
+        } catch {
+            currentSessionViewModel?.cancelReplayRecovery(sessionId: sessionIdToLoad)
+            if case ACPServiceError.rpc(_, let rpcError) = error, rpcError.code == -32601 {
+                if var info = agentInfo {
+                    info.capabilities.loadSession = false
+                    agentInfo = info
                 }
-                currentSessionViewModel?.loadChatState(
-                    serverId: self.id,
-                    sessionId: sessionIdToLoad,
-                    canLoadFromStorage: true
-                )
-                appendClosure("Failed to load session: \(error)")
+                appendClosure("session/load disabled for this agent (Method not found)")
+                staleSessionIds.remove(sessionIdToLoad)
+                localOnlySessionIds.insert(sessionIdToLoad)
             }
+            currentSessionViewModel?.loadChatState(
+                serverId: self.id,
+                sessionId: sessionIdToLoad,
+                canLoadFromStorage: true
+            )
+            appendClosure("Failed to load session: \(error)")
+            return false
         }
-        pendingSessionLoad = nil
+    }
+
+    /// Mark the currently selected ACP session as stale after a transport reconnect.
+    /// The next recovery pass will either rehydrate it from `session/load` or
+    /// explicitly mark it as local-only when the agent cannot provide server history.
+    func markSelectedSessionStaleAfterReconnect() {
+        guard !sessionId.isEmpty else { return }
+        guard !pendingLocalSessions.contains(sessionId) else { return }
+        staleSessionIds.insert(sessionId)
+        localOnlySessionIds.remove(sessionId)
+    }
+
+    /// Rehydrate the selected ACP session after reconnect.
+    ///
+    /// ACP does not provide AHP-style replay, so the safest recovery primitive is
+    /// `session/load` when available. Agents without load support keep local cache
+    /// visible and are marked as local-only so UI/diagnostics can distinguish that
+    /// state from fresh server-backed history.
+    @discardableResult
+    func recoverSelectedSessionAfterReconnect() async -> Bool {
+        guard !sessionId.isEmpty else { return true }
+        guard !pendingLocalSessions.contains(sessionId) else {
+            pendingSessionLoad = nil
+            staleSessionIds.remove(sessionId)
+            syncingSessionIds.remove(sessionId)
+            return true
+        }
+
+        guard canLoadSession() else {
+            pendingSessionLoad = nil
+            staleSessionIds.remove(sessionId)
+            syncingSessionIds.remove(sessionId)
+            localOnlySessionIds.insert(sessionId)
+            return true
+        }
+
+        guard connectionState == .connected, isInitialized else {
+            pendingSessionLoad = sessionId
+            staleSessionIds.insert(sessionId)
+            return false
+        }
+
+        if connectionManager.isSessionMaterialized(sessionId), !staleSessionIds.contains(sessionId) {
+            return true
+        }
+
+        let target = sessionId
+        let loaded = await loadSessionFromServer(target, markSyncing: true)
+        if !loaded, canLoadSession() {
+            staleSessionIds.insert(target)
+        }
+        return loaded
     }
 
     /// Open a session - if connected, use session/load to restore it from the server.
@@ -819,9 +929,8 @@ final class ServerViewModel: ObservableObject, Identifiable, ServerViewModelProt
 
         if hasLocalMessages && canLoadSession() {
             // We have locally cached messages, but the session may not be materialized
-            // on the server (e.g., after app restart). Per ACP spec, session/load
-            // replays the full conversation history, so we clear local messages and
-            // let the server replay them.
+            // on the server (e.g., after app restart). Keep local messages visible
+            // while session/load replay is merged back into the transcript.
             lastLoadedSession = resolvedId
             pendingSessionLoad = nil
             if connectionState == .connected, isInitialized {
@@ -1163,6 +1272,11 @@ final class ServerViewModel: ObservableObject, Identifiable, ServerViewModelProt
                 appendClosure("Create or load a session first")
                 return
             }
+            guard !syncingSessionIds.contains(sessionId) else {
+                appendClosure("Session is resuming; try again shortly")
+                failPendingTurn("Session is resuming")
+                return
+            }
 
             // End any prior streaming assistant message
             currentSessionViewModel?.abandonStreamingMessage()
@@ -1415,5 +1529,11 @@ extension ServerViewModel: ACPSessionEventDelegate {
         // Track that this session was successfully loaded
         connectionManager.markSessionMaterialized(sessionId)
         lastLoadedSession = sessionId
+        if currentSessionViewModel?.isReplayingRecovery(sessionId: sessionId) == true {
+            return
+        }
+        staleSessionIds.remove(sessionId)
+        syncingSessionIds.remove(sessionId)
+        localOnlySessionIds.remove(sessionId)
     }
 }
