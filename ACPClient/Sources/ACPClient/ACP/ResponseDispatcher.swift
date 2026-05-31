@@ -79,6 +79,8 @@ public enum ACPCapabilityKind: String, Sendable, Equatable {
     case listSessions
     case loadSession
     case resumeSession
+    case closeSession
+    case logout
 }
 
 /// RPC error information.
@@ -190,6 +192,14 @@ public enum ACPResponseDispatcher {
             actions.append(.sessionListReceived(listResult))
             actions.append(.capabilityConfirmed(.listSessions))
         }
+
+        if method == ACPMethods.sessionClose {
+            actions.append(.capabilityConfirmed(.closeSession))
+        }
+
+        if method == ACPMethods.logout {
+            actions.append(.capabilityConfirmed(.logout))
+        }
         
         // Session load completion
         if method == "session/load" {
@@ -222,8 +232,12 @@ public enum ACPResponseDispatcher {
                 actions.append(.capabilityDisabled(.loadSession))
             case "session/resume":
                 actions.append(.capabilityDisabled(.resumeSession))
+            case "session/close":
+                actions.append(.capabilityDisabled(.closeSession))
             case "session/list":
                 actions.append(.capabilityDisabled(.listSessions))
+            case "logout":
+                actions.append(.capabilityDisabled(.logout))
             default:
                 break
             }

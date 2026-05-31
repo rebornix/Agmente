@@ -529,6 +529,11 @@ public final class ACPClientManager: ObservableObject {
         materializedSessions.insert(sessionId)
     }
 
+    public func unmarkSessionMaterialized(_ sessionId: String) {
+        materializedSessions.remove(sessionId)
+        resumingSessions.remove(sessionId)
+    }
+
     public func isResumingSession(_ sessionId: String) -> Bool {
         resumingSessions.contains(sessionId)
     }

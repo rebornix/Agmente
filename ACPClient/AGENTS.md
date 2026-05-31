@@ -19,6 +19,10 @@ When adding ACP method support:
 3. Add response/event parsing coverage.
 4. Ensure delegate and pending-request behavior remain correct.
 5. Add package tests for success and failure paths.
+- Optional ACP methods currently supported include `logout`, `session/list`,
+  `session/load`, `session/resume`, `session/close`, `session/set_mode`, and
+  `session/set_config_option`; keep capability parsing and `-32601` fallback
+  behavior in sync when adding more optional methods.
 
 ## Compatibility Rules
 - Preserve support for server-initiated JSON-RPC requests (do not treat as transport errors).

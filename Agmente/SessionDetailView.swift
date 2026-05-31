@@ -133,7 +133,7 @@ struct SessionDetailView: View {
             FileChangesReviewSheet(items: fileChangesForReview)
         }
         .toolbar {
-            if model.canDeleteSessionsLocally, !serverViewModel.sessionId.isEmpty {
+            if model.canCloseOrDeleteCurrentSession, !serverViewModel.sessionId.isEmpty {
                 let placement: ToolbarItemPlacement = {
 #if os(macOS)
                     .primaryAction
@@ -146,7 +146,10 @@ struct SessionDetailView: View {
                         Button(role: .destructive) {
                             showDeleteSessionConfirm = true
                         } label: {
-                            Label("Delete Session", systemImage: "trash")
+                            Label(
+                                model.currentCloseSessionSupport == true ? "Close Session" : "Delete Session",
+                                systemImage: "trash"
+                            )
                         }
                     } label: {
                         Image(systemName: "ellipsis")
@@ -166,7 +169,11 @@ struct SessionDetailView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This removes the session and its cached chat history from this device.")
+            if model.currentCloseSessionSupport == true {
+                Text("This closes the session on the agent and removes its cached chat history from this device.")
+            } else {
+                Text("This removes the session and its cached chat history from this device.")
+            }
         }
         .alert("Undo not available", isPresented: $showUndoUnavailableAlert) {
             Button("OK", role: .cancel) {}

@@ -47,6 +47,10 @@ public final class ACPService {
         try await sendRequest(method: ACPMethods.initialize, params: payload.params())
     }
 
+    public func logout(_ payload: ACPLogoutPayload = .init()) async throws -> ACP.AnyResponse {
+        try await sendRequest(method: ACPMethods.logout, params: payload.params())
+    }
+
     public func createSession(_ payload: ACPSessionCreatePayload) async throws -> ACP.AnyResponse {
         try await sendRequest(method: ACPMethods.sessionNew, params: payload.params())
     }
@@ -70,6 +74,10 @@ public final class ACPService {
 
     public func cancelSession(_ payload: ACPSessionCancelPayload) async throws -> ACP.AnyResponse {
         try await sendRequest(method: ACPMethods.sessionCancel, params: payload.params())
+    }
+
+    public func closeSession(_ payload: ACPSessionClosePayload) async throws -> ACP.AnyResponse {
+        try await sendRequest(method: ACPMethods.sessionClose, params: payload.params())
     }
 
     public func listSessions(_ payload: ACPSessionListPayload = .init()) async throws -> ACP.AnyResponse {

@@ -113,6 +113,36 @@ final class ResponseDispatcherTests: XCTestCase {
             return false
         })
     }
+
+    func testSessionCloseConfirmsCapability() {
+        let actions = ACPResponseDispatcher.dispatchSuccess(
+            result: .object([:]),
+            method: "session/close",
+            context: ACPResponseDispatchContext()
+        )
+
+        XCTAssertTrue(actions.contains { action in
+            if case .capabilityConfirmed(let capability) = action {
+                return capability == .closeSession
+            }
+            return false
+        })
+    }
+
+    func testLogoutConfirmsCapability() {
+        let actions = ACPResponseDispatcher.dispatchSuccess(
+            result: .object([:]),
+            method: "logout",
+            context: ACPResponseDispatchContext()
+        )
+
+        XCTAssertTrue(actions.contains { action in
+            if case .capabilityConfirmed(let capability) = action {
+                return capability == .logout
+            }
+            return false
+        })
+    }
     
     // MARK: - Session Migration Tests
     
@@ -584,6 +614,32 @@ final class ResponseDispatcherTests: XCTestCase {
         XCTAssertTrue(actions.contains { action in
             if case .sessionActivated(let activation) = action {
                 return activation.cwd == "/pending/working/dir"
+            }
+            return false
+        })
+    }
+
+    func testMethodNotFoundDisablesCloseAndLogoutCapabilities() {
+        let closeActions = ACPResponseDispatcher.dispatchError(
+            code: -32601,
+            message: "Method not found",
+            method: "session/close"
+        )
+        XCTAssertTrue(closeActions.contains { action in
+            if case .capabilityDisabled(let capability) = action {
+                return capability == .closeSession
+            }
+            return false
+        })
+
+        let logoutActions = ACPResponseDispatcher.dispatchError(
+            code: -32601,
+            message: "Method not found",
+            method: "logout"
+        )
+        XCTAssertTrue(logoutActions.contains { action in
+            if case .capabilityDisabled(let capability) = action {
+                return capability == .logout
             }
             return false
         })

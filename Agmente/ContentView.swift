@@ -395,6 +395,15 @@ private extension ContentView {
                 }
                 .disabled(model.connectionState == .disconnected)
 
+                if model.canLogoutCurrentServer {
+                    Button {
+                        model.logoutCurrentServer()
+                    } label: {
+                        Label("Logout", systemImage: "rectangle.portrait.and.arrow.right")
+                    }
+                    .disabled(model.connectionState != .connected)
+                }
+
                 if let current = model.servers.first(where: { $0.id == model.selectedServerId }) {
                     Button {
                         serverToEdit = current

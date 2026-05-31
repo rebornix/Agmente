@@ -178,6 +178,26 @@ public struct ACPSessionCancelPayload: Sendable {
     }
 }
 
+public struct ACPSessionClosePayload: Sendable {
+    public var sessionId: String
+
+    public init(sessionId: String) {
+        self.sessionId = sessionId
+    }
+
+    func params() -> ACP.Value {
+        .object(["sessionId": .string(sessionId)])
+    }
+}
+
+public struct ACPLogoutPayload: Sendable {
+    public init() {}
+
+    func params() -> ACP.Value {
+        .object([:])
+    }
+}
+
 public struct ACPSessionListPayload: Sendable {
     public var limit: Int?
     public var cursor: String?

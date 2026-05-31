@@ -197,6 +197,10 @@ final class ServerViewModelTests: XCTestCase {
         }
     }
 
+    private func sentRequests(connection: RecordingWebSocketConnection, method: String) -> [[String: Any]] {
+        sentRequests(connection: connection).filter { $0["method"] as? String == method }
+    }
+
     private func waitForSentRequest(
         connection: RecordingWebSocketConnection,
         method: String,
@@ -209,6 +213,22 @@ final class ServerViewModelTests: XCTestCase {
             try? await Task.sleep(nanoseconds: 10_000_000)
         }
         return nil
+    }
+
+    private func waitForSentRequestCount(
+        connection: RecordingWebSocketConnection,
+        method: String,
+        count: Int,
+        attempts: Int = 200
+    ) async -> [[String: Any]] {
+        for _ in 0..<attempts {
+            let requests = sentRequests(connection: connection, method: method)
+            if requests.count >= count {
+                return requests
+            }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        return sentRequests(connection: connection, method: method)
     }
 
     private func enqueueResponse(id: Int, result: ACP.Value, on connection: RecordingWebSocketConnection) throws {
@@ -626,10 +646,11 @@ final class ServerViewModelTests: XCTestCase {
 
     // MARK: - Session Re-materialization Tests
 
-    func testOpenStoredSessionSendsSessionLoadWhenAgentSupportsIt() async throws {
+    func testOpenStoredSessionShowsCachedMessagesAndDefersLoad() async throws {
         // Simulates: app restart with a persisted session, agent supports session/load.
         // The session is in Core Data but NOT materialized on the server.
-        // openSession should call session/load to re-materialize.
+        // openSession should show cached messages immediately and NOT send
+        // session/load; materialization is deferred to the sendPrompt preflight.
         let connection = RecordingWebSocketConnection()
         let provider = RecordingWebSocketProvider(connection: connection)
         let client = ACPClient(
@@ -702,21 +723,19 @@ final class ServerViewModelTests: XCTestCase {
         serverViewModel.fetchSessionList()
         XCTAssertFalse(manager.isSessionMaterialized("stale-session-1"))
 
-        // Enqueue response for session/load
-        Task {
-            guard let loadRequest = await self.waitForSentRequest(connection: connection, method: "session/load"),
-                  let loadId = loadRequest["id"] as? Int else { return }
-            try? self.enqueueResponse(id: loadId, result: .object([:]), on: connection)
-        }
-
         serverViewModel.openSession("stale-session-1")
 
-        // Verify session/load was sent with the correct session ID
-        let loadRequest = await waitForSentRequest(connection: connection, method: "session/load")
-        XCTAssertNotNil(loadRequest, "session/load should be sent for a stored but non-materialized session")
-        if let params = loadRequest?["params"] as? [String: Any] {
-            XCTAssertEqual(params["sessionId"] as? String, "stale-session-1")
-        }
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        XCTAssertFalse(
+            hasSentRequest(connection: connection, method: "session/load"),
+            "openSession should not eagerly send session/load when cached messages exist"
+        )
+
+        let messages = try XCTUnwrap(serverViewModel.currentSessionViewModel?.chatMessages)
+        XCTAssertFalse(messages.isEmpty, "Cached messages should be shown immediately")
+        XCTAssertEqual(messages.first?.content, "old message")
+        XCTAssertFalse(manager.isSessionMaterialized("stale-session-1"))
     }
 
     func testOpenStoredSessionSkipsLoadWhenAgentDoesNotSupportIt() async throws {
@@ -901,5 +920,340 @@ final class ServerViewModelTests: XCTestCase {
 
         // Verify session is now materialized
         XCTAssertTrue(manager.isSessionMaterialized("orphaned-session-1"))
+    }
+
+    func testFetchSessionListStartsWithGlobalRequestWithoutCwd() async throws {
+        let connection = RecordingWebSocketConnection()
+        let provider = RecordingWebSocketProvider(connection: connection)
+        let client = ACPClient(
+            configuration: .init(endpoint: URL(string: "ws://localhost:1234")!, pingInterval: nil),
+            socketProvider: provider
+        )
+        let service = ACPService(client: client)
+        try await service.connect()
+
+        let manager = ACPClientManager(
+            defaults: UserDefaults(suiteName: "ServerViewModelTests.\(UUID().uuidString)")!,
+            shouldStartNetworkMonitoring: false
+        )
+        manager.setServiceForTesting(service)
+
+        let serverViewModel = ServerViewModel(
+            id: UUID(),
+            name: "Local",
+            scheme: "ws",
+            host: "localhost:1234",
+            token: "",
+            workingDirectory: "/home/rebornix",
+            connectionManager: manager,
+            getService: { manager.service },
+            append: { _ in },
+            logWire: { _, _ in },
+            cacheDelegate: TestCacheDelegate(),
+            storage: SessionStorage.inMemory()
+        )
+        serverViewModel.updateAgentInfo(AgentProfile(
+            id: nil,
+            name: "test-agent",
+            title: "Test",
+            version: "1.0",
+            description: nil,
+            modes: [],
+            capabilities: AgentCapabilityState(listSessions: true),
+            verifications: []
+        ))
+
+        serverViewModel.fetchSessionList(force: true)
+
+        let maybeRequest = await waitForSentRequest(connection: connection, method: "session/list")
+        let request = try XCTUnwrap(maybeRequest)
+        let params = try XCTUnwrap(request["params"] as? [String: Any])
+        XCTAssertNil(params["cwd"])
+        XCTAssertTrue(params.isEmpty)
+
+        let requestId = try XCTUnwrap(request["id"] as? Int)
+        try enqueueResponse(
+            id: requestId,
+            result: .object([
+                "sessions": .array([
+                    .object([
+                        "sessionId": .string("global-session"),
+                        "cwd": .string("/home/rebornix"),
+                        "title": .string("Global Session")
+                    ])
+                ])
+            ]),
+            on: connection
+        )
+        serverViewModel.handleSessionListResult([
+            .init(id: "global-session", title: "Global Session", cwd: "/home/rebornix", updatedAt: nil)
+        ])
+
+        XCTAssertEqual(serverViewModel.sessionSummaries.map(\.id), ["global-session"])
+        XCTAssertEqual(sentRequests(connection: connection, method: "session/list").count, 1)
+    }
+
+    func testEmptyGlobalSessionListFallsBackToKnownAndDefaultCwds() async throws {
+        let connection = RecordingWebSocketConnection()
+        let provider = RecordingWebSocketProvider(connection: connection)
+        let client = ACPClient(
+            configuration: .init(endpoint: URL(string: "ws://localhost:1234")!, pingInterval: nil),
+            socketProvider: provider
+        )
+        let service = ACPService(client: client)
+        try await service.connect()
+
+        let manager = ACPClientManager(
+            defaults: UserDefaults(suiteName: "ServerViewModelTests.\(UUID().uuidString)")!,
+            shouldStartNetworkMonitoring: false
+        )
+        manager.setServiceForTesting(service)
+
+        let serverId = UUID()
+        let storage = SessionStorage.inMemory()
+        storage.saveServer(makeStoredServer(id: serverId, workingDirectory: "/home/rebornix"))
+        storage.addUsedWorkingDirectory("/tmp/known", forServerId: serverId)
+
+        let serverViewModel = ServerViewModel(
+            id: serverId,
+            name: "Local",
+            scheme: "ws",
+            host: "localhost:1234",
+            token: "",
+            workingDirectory: "/home/rebornix",
+            connectionManager: manager,
+            getService: { manager.service },
+            append: { _ in },
+            logWire: { _, _ in },
+            cacheDelegate: TestCacheDelegate(),
+            storage: storage
+        )
+        serverViewModel.updateAgentInfo(AgentProfile(
+            id: nil,
+            name: "test-agent",
+            title: "Test",
+            version: "1.0",
+            description: nil,
+            modes: [],
+            capabilities: AgentCapabilityState(listSessions: true),
+            verifications: []
+        ))
+
+        serverViewModel.fetchSessionList(force: true)
+        let maybeGlobalRequest = await waitForSentRequest(connection: connection, method: "session/list")
+        let globalRequest = try XCTUnwrap(maybeGlobalRequest)
+        let globalId = try XCTUnwrap(globalRequest["id"] as? Int)
+        try enqueueResponse(id: globalId, result: .object(["sessions": .array([])]), on: connection)
+        serverViewModel.handleSessionListResult([])
+
+        let requests = await waitForSentRequestCount(connection: connection, method: "session/list", count: 3)
+        let cwdValues = requests.dropFirst().compactMap { request in
+            (request["params"] as? [String: Any])?["cwd"] as? String
+        }
+
+        XCTAssertEqual(Set(cwdValues), Set(["/home/rebornix", "/tmp/known"]))
+    }
+
+    func testGlobalSessionListErrorFallsBackToDefaultCwd() async throws {
+        let connection = RecordingWebSocketConnection()
+        let provider = RecordingWebSocketProvider(connection: connection)
+        let client = ACPClient(
+            configuration: .init(endpoint: URL(string: "ws://localhost:1234")!, pingInterval: nil),
+            socketProvider: provider
+        )
+        let service = ACPService(client: client)
+        try await service.connect()
+
+        let manager = ACPClientManager(
+            defaults: UserDefaults(suiteName: "ServerViewModelTests.\(UUID().uuidString)")!,
+            shouldStartNetworkMonitoring: false
+        )
+        manager.setServiceForTesting(service)
+
+        let serverId = UUID()
+        let storage = SessionStorage.inMemory()
+        storage.saveServer(makeStoredServer(id: serverId, workingDirectory: "/home/rebornix"))
+
+        let serverViewModel = ServerViewModel(
+            id: serverId,
+            name: "Local",
+            scheme: "ws",
+            host: "localhost:1234",
+            token: "",
+            workingDirectory: "/home/rebornix",
+            connectionManager: manager,
+            getService: { manager.service },
+            append: { _ in },
+            logWire: { _, _ in },
+            cacheDelegate: TestCacheDelegate(),
+            storage: storage
+        )
+        serverViewModel.updateAgentInfo(AgentProfile(
+            id: nil,
+            name: "test-agent",
+            title: "Test",
+            version: "1.0",
+            description: nil,
+            modes: [],
+            capabilities: AgentCapabilityState(listSessions: true),
+            verifications: []
+        ))
+
+        serverViewModel.fetchSessionList(force: true)
+        let maybeGlobalRequest = await waitForSentRequest(connection: connection, method: "session/list")
+        let globalRequest = try XCTUnwrap(maybeGlobalRequest)
+        let globalId = try XCTUnwrap(globalRequest["id"] as? Int)
+        try enqueueError(id: globalId, error: .internalError("Invalid input"), on: connection)
+
+        let requests = await waitForSentRequestCount(connection: connection, method: "session/list", count: 2)
+        let fallbackCwd = (requests.last?["params"] as? [String: Any])?["cwd"] as? String
+        XCTAssertEqual(fallbackCwd, "/home/rebornix")
+    }
+
+    func testDeleteSessionUsesSessionCloseWhenAdvertised() async throws {
+        let connection = RecordingWebSocketConnection()
+        let provider = RecordingWebSocketProvider(connection: connection)
+        let client = ACPClient(
+            configuration: .init(endpoint: URL(string: "ws://localhost:1234")!, pingInterval: nil),
+            socketProvider: provider
+        )
+        let service = ACPService(client: client)
+        try await service.connect()
+
+        let suiteName = "ServerViewModelTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        let manager = ACPClientManager(defaults: defaults, shouldStartNetworkMonitoring: false)
+        manager.setServiceForTesting(service)
+        manager.markSessionMaterialized("session-to-close")
+
+        let serverId = UUID()
+        let storage = SessionStorage.inMemory()
+        storage.saveServer(makeStoredServer(id: serverId))
+        storage.saveSession(
+            StoredSessionInfo(sessionId: "session-to-close", title: nil, cwd: "/tmp", updatedAt: nil),
+            forServerId: serverId
+        )
+        storage.saveSession(
+            StoredSessionInfo(sessionId: "other-session", title: nil, cwd: "/tmp", updatedAt: nil),
+            forServerId: serverId
+        )
+
+        let serverViewModel = ServerViewModel(
+            id: serverId,
+            name: "Local",
+            scheme: "ws",
+            host: "localhost:1234",
+            token: "",
+            workingDirectory: "/tmp",
+            connectionManager: manager,
+            getService: { manager.service },
+            append: { _ in },
+            logWire: { _, _ in },
+            cacheDelegate: TestCacheDelegate(),
+            storage: storage
+        )
+        serverViewModel.updateConnectedProtocol(.acp)
+        serverViewModel.updateAgentInfo(AgentProfile(
+            id: nil,
+            name: "test-agent",
+            title: "Test",
+            version: "1.0",
+            description: nil,
+            modes: [],
+            capabilities: AgentCapabilityState(closeSession: true, listSessions: true),
+            verifications: []
+        ))
+        serverViewModel.sessionSummaries = [
+            .init(id: "session-to-close", title: nil, cwd: "/tmp", updatedAt: nil),
+            .init(id: "other-session", title: nil, cwd: "/tmp", updatedAt: nil)
+        ]
+        serverViewModel.setActiveSession("session-to-close")
+
+        Task {
+            guard let closeRequest = await self.waitForSentRequest(connection: connection, method: "session/close"),
+                  let closeId = closeRequest["id"] as? Int else { return }
+            try? self.enqueueResponse(id: closeId, result: .object([:]), on: connection)
+        }
+
+        serverViewModel.deleteSession("session-to-close")
+
+        let closeRequest = await waitForSentRequest(connection: connection, method: "session/close")
+        XCTAssertEqual((closeRequest?["params"] as? [String: Any])?["sessionId"] as? String, "session-to-close")
+
+        for _ in 0..<100 where serverViewModel.sessionId == "session-to-close" {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+
+        XCTAssertEqual(serverViewModel.sessionId, "")
+        XCTAssertFalse(manager.isSessionMaterialized("session-to-close"))
+        XCTAssertFalse(
+            storage.fetchSessions(forServerId: serverId).contains { $0.sessionId == "session-to-close" }
+        )
+        XCTAssertTrue(
+            storage.fetchSessions(forServerId: serverId).contains { $0.sessionId == "other-session" }
+        )
+    }
+
+    func testSessionCloseMethodNotFoundDisablesCapabilityAndDeletesLocally() async throws {
+        let connection = RecordingWebSocketConnection()
+        let provider = RecordingWebSocketProvider(connection: connection)
+        let client = ACPClient(
+            configuration: .init(endpoint: URL(string: "ws://localhost:1234")!, pingInterval: nil),
+            socketProvider: provider
+        )
+        let service = ACPService(client: client)
+        try await service.connect()
+
+        let suiteName = "ServerViewModelTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        let manager = ACPClientManager(defaults: defaults, shouldStartNetworkMonitoring: false)
+        manager.setServiceForTesting(service)
+
+        let serverId = UUID()
+        let serverViewModel = ServerViewModel(
+            id: serverId,
+            name: "Local",
+            scheme: "ws",
+            host: "localhost:1234",
+            token: "",
+            workingDirectory: "/tmp",
+            connectionManager: manager,
+            getService: { manager.service },
+            append: { _ in },
+            logWire: { _, _ in },
+            cacheDelegate: TestCacheDelegate(),
+            storage: SessionStorage.inMemory()
+        )
+        serverViewModel.updateConnectedProtocol(.acp)
+        serverViewModel.updateAgentInfo(AgentProfile(
+            id: nil,
+            name: "test-agent",
+            title: "Test",
+            version: "1.0",
+            description: nil,
+            modes: [],
+            capabilities: AgentCapabilityState(closeSession: true),
+            verifications: []
+        ))
+        serverViewModel.sessionSummaries = [.init(id: "session-to-close", title: nil, cwd: "/tmp", updatedAt: nil)]
+        serverViewModel.setActiveSession("session-to-close")
+
+        Task {
+            guard let closeRequest = await self.waitForSentRequest(connection: connection, method: "session/close"),
+                  let closeId = closeRequest["id"] as? Int else { return }
+            try? self.enqueueError(id: closeId, error: .methodNotFound("Method not found"), on: connection)
+        }
+
+        serverViewModel.deleteSession("session-to-close")
+        _ = await waitForSentRequest(connection: connection, method: "session/close")
+
+        for _ in 0..<100 where serverViewModel.sessionId == "session-to-close" {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+
+        XCTAssertEqual(serverViewModel.sessionId, "")
+        XCTAssertEqual(serverViewModel.agentInfo?.capabilities.closeSession, false)
     }
 }

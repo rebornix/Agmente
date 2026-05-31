@@ -139,6 +139,7 @@ final class ServerViewModel: ObservableObject, Identifiable, ServerViewModelProt
     private var pendingNewSessionCwd: String?
     private var pendingNewSessionPlaceholderId: String?
     private var pendingMultiCwdFetch: (remaining: Int, sessions: [SessionSummary])?
+    private var pendingGlobalSessionListFetch = false
 
     private func startupLog(_ message: String) {
         print("[APP][STARTUP] \(message)")
@@ -252,6 +253,11 @@ final class ServerViewModel: ObservableObject, Identifiable, ServerViewModelProt
     /// Check if this server supports session/resume capability.
     private func canResumeSession() -> Bool {
         agentInfo?.capabilities.resumeSession ?? false
+    }
+
+    /// Check if this server supports session/close capability.
+    private func canCloseSession() -> Bool {
+        agentInfo?.capabilities.closeSession ?? false
     }
 
     /// Check if there are cached messages for a session.
@@ -817,20 +823,12 @@ final class ServerViewModel: ObservableObject, Identifiable, ServerViewModelProt
 
         let hasLocalMessages = hasCachedMessages || hasStoredMessages || hasInMemoryState
 
-        if hasLocalMessages && canLoadSession() {
-            // We have locally cached messages, but the session may not be materialized
-            // on the server (e.g., after app restart). Per ACP spec, session/load
-            // replays the full conversation history, so we clear local messages and
-            // let the server replay them.
-            lastLoadedSession = resolvedId
-            pendingSessionLoad = nil
-            if connectionState == .connected, isInitialized {
-                sendLoadSession(resolvedId)
-            } else {
-                pendingSessionLoad = resolvedId
-            }
-        } else if hasLocalMessages {
-            // Agent doesn't support session/load, just show cached messages
+        if hasLocalMessages {
+            // Show cached messages immediately for a responsive UI.
+            // The session may not be materialized on the server (e.g., after
+            // app restart without --persist). Re-materialization is deferred
+            // to the sendPrompt preflight, which calls session/load (or
+            // session/resume) before the first prompt is sent.
             lastLoadedSession = resolvedId
             pendingSessionLoad = nil
         } else if canLoadSession() {
@@ -941,6 +939,43 @@ final class ServerViewModel: ObservableObject, Identifiable, ServerViewModelProt
 
     /// Delete a session.
     func deleteSession(_ sessionId: String) {
+        guard !sessionId.isEmpty else { return }
+        if canCloseSession(), connectedProtocol != .codexAppServer {
+            closeSessionThenDeleteLocally(sessionId)
+        } else {
+            deleteSessionLocally(sessionId)
+        }
+    }
+
+    private func closeSessionThenDeleteLocally(_ sessionId: String) {
+        guard let service = getServiceClosure() else {
+            appendClosure("Not connected; deleting cached session locally")
+            deleteSessionLocally(sessionId)
+            return
+        }
+
+        Task { @MainActor in
+            do {
+                _ = try await service.closeSession(ACPSessionClosePayload(sessionId: sessionId))
+                connectionManager.unmarkSessionMaterialized(sessionId)
+                appendClosure("Closed session on agent")
+            } catch {
+                if case ACPServiceError.rpc(_, let rpcError) = error, rpcError.code == -32601 {
+                    if var info = agentInfo {
+                        info.capabilities.closeSession = false
+                        agentInfo = info
+                    }
+                    appendClosure("session/close disabled for this agent (Method not found)")
+                } else {
+                    appendClosure("Failed to close session on agent: \(error)")
+                }
+            }
+
+            deleteSessionLocally(sessionId)
+        }
+    }
+
+    private func deleteSessionLocally(_ sessionId: String) {
         // Cancel any in-flight session creation task
         creatingSessionTasks[sessionId]?.cancel()
         creatingSessionTasks.removeValue(forKey: sessionId)
@@ -964,6 +999,7 @@ final class ServerViewModel: ObservableObject, Identifiable, ServerViewModelProt
             currentSessionViewModel?.resetChatState()
         }
 
+        connectionManager.unmarkSessionMaterialized(sessionId)
         removeSessionViewModel(for: sessionId)
         storage?.deleteSession(sessionId: sessionId, forServerId: id)
     }
@@ -1006,10 +1042,41 @@ final class ServerViewModel: ObservableObject, Identifiable, ServerViewModelProt
         }
 
         if connectionState == .connected, let service = getServiceClosure() {
-            // Always fetch from all working directories to get complete session list
-            sendSessionListForAllWorkingDirectories(service: service)
+            sendSessionListWithFallback(service: service)
         } else {
             loadCachedSessions()
+        }
+    }
+
+    private func sessionListRequiresCwd() -> Bool {
+        agentInfo?.capabilities.sessionListRequiresCwd ?? false
+    }
+
+    /// Prefer the spec-shaped global session/list request. If the agent returns no sessions
+    /// or rejects it, fall back to explicit cwd fanout for compatibility.
+    private func sendSessionListWithFallback(service: ACPService) {
+        guard !sessionListRequiresCwd() else {
+            sendSessionListForAllWorkingDirectories(service: service)
+            return
+        }
+
+        guard !pendingGlobalSessionListFetch, pendingMultiCwdFetch == nil else {
+            startupLog("ServerViewModel.sendSessionListWithFallback already pending serverId=\(id.uuidString)")
+            return
+        }
+
+        pendingGlobalSessionListFetch = true
+        startupLog("ServerViewModel.sendSessionListWithFallback serverId=\(id.uuidString) cwd=nil")
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                _ = try await service.listSessions(ACPSessionListPayload())
+            } catch {
+                guard self.pendingGlobalSessionListFetch else { return }
+                self.pendingGlobalSessionListFetch = false
+                self.appendClosure("Global session list failed; fetching sessions by working directory")
+                self.sendSessionListForAllWorkingDirectories(service: service)
+            }
         }
     }
 
@@ -1041,11 +1108,16 @@ final class ServerViewModel: ObservableObject, Identifiable, ServerViewModelProt
             return
         }
 
-        // Normalize and apply review overrides before issuing requests to avoid using "/" on review hosts.
-        let effectiveCwds = Array(Set(storage.fetchUsedWorkingDirectories(forServerId: id).map { cwd in
+        var knownCwds = storage.fetchUsedWorkingDirectories(forServerId: id)
+        if !knownCwds.contains(resolvedWorkingDirectory) {
+            knownCwds.insert(resolvedWorkingDirectory, at: 0)
+        }
+
+        // Normalize before issuing requests.
+        let effectiveCwds = Array(Set(knownCwds.map { cwd in
             let sanitized = sanitizeWorkingDirectory(cwd)
             return effectiveWorkingDirectory(sanitized)
-        }))
+        })).sorted()
 
         guard !effectiveCwds.isEmpty else {
             sendSessionList(service: service)
@@ -1079,6 +1151,21 @@ final class ServerViewModel: ObservableObject, Identifiable, ServerViewModelProt
             "ServerViewModel.handleSessionListResult serverId=\(id.uuidString) sessions=\(sessions.count) pendingRemaining=\(pendingMultiCwdFetch?.remaining ?? 0)"
         )
         guard var pending = pendingMultiCwdFetch else {
+            if pendingGlobalSessionListFetch {
+                pendingGlobalSessionListFetch = false
+                guard !sessions.isEmpty else {
+                    appendClosure("Global session list returned no sessions; fetching sessions by working directory")
+                    if let service = getServiceClosure() {
+                        sendSessionListForAllWorkingDirectories(service: service)
+                    } else {
+                        setSessionSummaries([])
+                        persistSessionsToStorage()
+                        appendClosure("Fetched 0 sessions")
+                    }
+                    return
+                }
+            }
+
             // Not in multi-CWD mode, update directly
             // Only update if server supports session/list, otherwise keep cached sessions
             if sessionListSupportFlag() == true {
@@ -1277,14 +1364,19 @@ final class ServerViewModel: ObservableObject, Identifiable, ServerViewModelProt
                 return
             }
 
-            // Handle session re-materialization if needed
-            // Try session/load first (for agents that support it), then session/resume
+            // Handle session re-materialization if needed.
+            // Try session/load first (for agents that support it), then session/resume.
             if canLoadSession(),
                !pendingLocalSessions.contains(sessionId),
                !connectionManager.isSessionMaterialized(sessionId) {
                 let sessionToLoad = sessionId
                 let configuredCwd = sessionSummaries.first(where: { $0.id == sessionToLoad })?.cwd ?? resolvedWorkingDirectory
                 let loadCwd = effectiveWorkingDirectory(configuredCwd)
+
+                // Do not clear local messages here. Not all agents replay
+                // conversation history during session/load (for example, agent acp
+                // restores the session context but sends zero replay notifications).
+                // Keeping cached messages avoids losing the only local transcript.
 
                 let payload = ACPSessionLoadPayload(
                     sessionId: sessionToLoad,

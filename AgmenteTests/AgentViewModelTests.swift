@@ -39,10 +39,17 @@ final class AgentViewModelTests: XCTestCase {
         return ACPService(client: client)
     }
 
-    private func makeAgentInfo(name: String = "test-agent", title: String? = nil, version: String? = nil, loadSession: Bool = false) -> AgentProfile {
+    private func makeAgentInfo(
+        name: String = "test-agent",
+        title: String? = nil,
+        version: String? = nil,
+        loadSession: Bool = false,
+        supportsLogout: Bool = false
+    ) -> AgentProfile {
         var capabilities = AgentCapabilityState()
         capabilities.loadSession = loadSession
         capabilities.listSessions = true
+        capabilities.supportsLogout = supportsLogout
 
         return AgentProfile(
             id: nil,
@@ -136,6 +143,23 @@ final class AgentViewModelTests: XCTestCase {
         }
     }
 
+    private func waitForSentRequest(
+        connection: RecordingWebSocketConnection,
+        method: String,
+        attempts: Int = 200
+    ) async -> ACP.AnyRequest? {
+        for _ in 0..<attempts {
+            if let request = sentMessages(connection: connection).compactMap({ message -> ACP.AnyRequest? in
+                guard case let .request(request) = message else { return nil }
+                return request
+            }).first(where: { $0.method == method }) {
+                return request
+            }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        return nil
+    }
+
     private func waitForSentResponse(
         connection: RecordingWebSocketConnection,
         id: ACP.ID,
@@ -151,6 +175,18 @@ final class AgentViewModelTests: XCTestCase {
             try? await Task.sleep(nanoseconds: 10_000_000)
         }
         return nil
+    }
+
+    private func enqueueResponse(id: ACP.ID, result: ACP.Value, on connection: RecordingWebSocketConnection) throws {
+        let response = ACPWireMessage.response(.init(id: id, result: result))
+        let data = try JSONEncoder().encode(response)
+        connection.enqueue(.text(String(decoding: data, as: UTF8.self)))
+    }
+
+    private func enqueueError(id: ACP.ID, error: ACPError, on connection: RecordingWebSocketConnection) throws {
+        let response = ACPWireMessage.response(.init(id: id, error: error))
+        let data = try JSONEncoder().encode(response)
+        connection.enqueue(.text(String(decoding: data, as: UTF8.self)))
     }
 
     func testCapabilitySupportReturnsNilBeforeInitialize() {
@@ -189,6 +225,85 @@ final class AgentViewModelTests: XCTestCase {
         XCTAssertEqual(model.initializationSummary, "test-agent v0.1.0 (initialized)")
         XCTAssertEqual(model.currentLoadSessionSupport, true)
         XCTAssertEqual(model.currentSessionListSupport, true)
+    }
+
+    func testLogoutCurrentServerClearsInitializedState() async throws {
+        let model = makeModel()
+        addServer(to: model, agentInfo: makeAgentInfo(version: "1.0.0", supportsLogout: true))
+
+        let connection = RecordingWebSocketConnection()
+        let service = try await makeConnectedService(connection: connection)
+        model.setServiceForTesting(service)
+
+        let initRequest = ACP.AnyRequest(id: .int(1), method: "initialize", params: nil)
+        model.acpService(service, willSend: initRequest)
+        let initResult: ACP.Value = .object([
+            "protocolVersion": .number(1),
+            "agentInfo": .object([
+                "name": .string("test-agent"),
+                "version": .string("1.0.0"),
+            ]),
+            "agentCapabilities": .object([
+                "auth": .object([
+                    "logout": .object([:]),
+                ]),
+            ]),
+        ])
+        model.acpService(service, didReceiveMessage: .response(.init(id: .int(1), result: initResult)))
+
+        XCTAssertEqual(model.initializationSummary, "test-agent v1.0.0 (initialized)")
+        XCTAssertTrue(model.canLogoutCurrentServer)
+
+        Task {
+            guard let logoutRequest = await self.waitForSentRequest(
+                connection: connection,
+                method: "logout"
+            ) else { return }
+            try? self.enqueueResponse(id: logoutRequest.id, result: .object([:]), on: connection)
+        }
+
+        model.logoutCurrentServer()
+
+        let maybeLogoutRequest = await waitForSentRequest(connection: connection, method: "logout")
+        let logoutRequest = try XCTUnwrap(maybeLogoutRequest)
+        XCTAssertEqual(logoutRequest.params, .object([:]))
+
+        for _ in 0..<100 where model.initializationSummary != "Not initialized" {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTAssertEqual(model.initializationSummary, "Not initialized")
+    }
+
+    func testLogoutMethodNotFoundDisablesLogoutCapability() async throws {
+        let model = makeModel()
+        addServer(to: model, agentInfo: makeAgentInfo(version: "1.0.0", supportsLogout: true))
+
+        let connection = RecordingWebSocketConnection()
+        let service = try await makeConnectedService(connection: connection)
+        model.setServiceForTesting(service)
+
+        XCTAssertTrue(model.canLogoutCurrentServer)
+
+        Task {
+            guard let logoutRequest = await self.waitForSentRequest(
+                connection: connection,
+                method: "logout"
+            ) else { return }
+            try? self.enqueueError(
+                id: logoutRequest.id,
+                error: .methodNotFound("Method not found"),
+                on: connection
+            )
+        }
+
+        model.logoutCurrentServer()
+        _ = await waitForSentRequest(connection: connection, method: "logout")
+
+        for _ in 0..<100 where model.canLogoutCurrentServer {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTAssertFalse(model.canLogoutCurrentServer)
+        XCTAssertEqual(model.currentAgentInfo?.capabilities.supportsLogout, false)
     }
 
     func testInitializeCodexSetsCapabilities() {

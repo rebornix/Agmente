@@ -566,6 +566,15 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
         guard let id = selectedServerId else { return nil }
         return agentInfoCache[id]?.capabilities.loadSession
     }
+
+    var currentCloseSessionSupport: Bool? {
+        serverAgentInfo?.capabilities.closeSession
+    }
+
+    var canLogoutCurrentServer: Bool {
+        guard selectedCodexServerViewModel == nil else { return false }
+        return serverAgentInfo?.capabilities.supportsLogout == true
+    }
     
     /// Returns the default working directory for the selected server.
     var defaultWorkingDirectory: String {
@@ -1115,6 +1124,10 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
     var canDeleteSessionsLocally: Bool {
         guard let serverId = selectedServerId else { return false }
         return sessionListSupportFlag(for: serverId) == false
+    }
+
+    var canCloseOrDeleteCurrentSession: Bool {
+        canDeleteSessionsLocally || currentCloseSessionSupport == true
     }
 
     /// Whether the selected server supports archiving sessions (Codex app-server only).
@@ -1679,6 +1692,33 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
             serverLifecycleController.enqueuePendingDisconnect(serverId)
         }
         connectionManager.disconnect()
+    }
+
+    func logoutCurrentServer() {
+        guard canLogoutCurrentServer else { return }
+        guard let serverId = selectedServerId else { return }
+        guard let service = connectionManager.service else {
+            append("Not connected")
+            return
+        }
+
+        Task { @MainActor in
+            do {
+                _ = try await service.logout()
+                initializedServers.remove(serverId)
+                initializationCache[serverId] = "Not initialized"
+                initializationSummary = "Not initialized"
+                connectionManager.shouldAutoInitialize = false
+                append("Logged out")
+            } catch {
+                if case ACPServiceError.rpc(_, let rpcError) = error, rpcError.code == -32601 {
+                    applyCapabilityChange(.logout, enabled: false, serverId: serverId)
+                    append("logout disabled for this agent (Method not found)")
+                } else {
+                    append("Failed to logout: \(error)")
+                }
+            }
+        }
     }
 
     /// On iOS, long background periods frequently abort existing WebSocket connections.
@@ -2428,6 +2468,10 @@ final class AppViewModel: ObservableObject, ACPClientManagerDelegate, ACPSession
             agentInfo.capabilities.loadSession = enabled
         case .resumeSession:
             agentInfo.capabilities.resumeSession = enabled
+        case .closeSession:
+            agentInfo.capabilities.closeSession = enabled
+        case .logout:
+            agentInfo.capabilities.supportsLogout = enabled
         }
 
         agentInfoCache[serverId] = agentInfo

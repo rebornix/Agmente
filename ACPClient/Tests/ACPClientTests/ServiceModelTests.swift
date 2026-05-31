@@ -182,6 +182,32 @@ final class ServiceModelTests: XCTestCase {
         
         XCTAssertEqual(dict["sessionId"]?.stringValue, "cancel-session")
     }
+
+    func testSessionClosePayloadParams() {
+        let payload = ACPSessionClosePayload(sessionId: "close-session")
+
+        let params = payload.params()
+
+        guard case let .object(dict) = params else {
+            XCTFail("Expected object params")
+            return
+        }
+
+        XCTAssertEqual(dict["sessionId"]?.stringValue, "close-session")
+    }
+
+    func testLogoutPayloadParams() {
+        let payload = ACPLogoutPayload()
+
+        let params = payload.params()
+
+        guard case let .object(dict) = params else {
+            XCTFail("Expected object params")
+            return
+        }
+
+        XCTAssertTrue(dict.isEmpty)
+    }
     
     // MARK: - ACPInitializationPayload Tests
     

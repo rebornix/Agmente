@@ -155,4 +155,58 @@ struct ACPServiceTests {
         let requests = await MainActor.run { delegate.sentRequests }
         #expect(requests.last?.method == "session/set_config_option")
     }
+
+    @Test func logoutSendsRequestAndResolvesResponse() async throws {
+        let provider = MockWebSocketProvider()
+        let client = ACPClient(
+            configuration: .init(endpoint: URL(string: "wss://example.com/socket")!),
+            socketProvider: provider
+        )
+        let delegate = CapturingServiceDelegate()
+        let service = ACPService(client: client)
+        service.delegate = delegate
+
+        try await service.connect()
+
+        Task {
+            let response = ACPWireMessage.response(.init(id: .int(1), result: .object([:])))
+            let encoded = try JSONEncoder().encode(response)
+            let text = String(decoding: encoded, as: UTF8.self)
+            provider.connection.enqueue(.text(text))
+        }
+
+        let response = try await service.logout()
+
+        #expect(response.resultValue == .object([:]))
+        let requests = await MainActor.run { delegate.sentRequests }
+        #expect(requests.last?.method == "logout")
+        #expect(requests.last?.params == .object([:]))
+    }
+
+    @Test func closeSessionSendsRequestAndResolvesResponse() async throws {
+        let provider = MockWebSocketProvider()
+        let client = ACPClient(
+            configuration: .init(endpoint: URL(string: "wss://example.com/socket")!),
+            socketProvider: provider
+        )
+        let delegate = CapturingServiceDelegate()
+        let service = ACPService(client: client)
+        service.delegate = delegate
+
+        try await service.connect()
+
+        Task {
+            let response = ACPWireMessage.response(.init(id: .int(1), result: .object([:])))
+            let encoded = try JSONEncoder().encode(response)
+            let text = String(decoding: encoded, as: UTF8.self)
+            provider.connection.enqueue(.text(text))
+        }
+
+        let response = try await service.closeSession(ACPSessionClosePayload(sessionId: "session-1"))
+
+        #expect(response.resultValue == .object([:]))
+        let requests = await MainActor.run { delegate.sentRequests }
+        #expect(requests.last?.method == "session/close")
+        #expect(requests.last?.params == .object(["sessionId": .string("session-1")]))
+    }
 }

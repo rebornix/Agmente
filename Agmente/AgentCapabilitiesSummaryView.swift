@@ -17,7 +17,9 @@ struct AgentCapabilitiesSummary: View {
             ("promptCapabilities.audio", "waveform", "Audio", capabilities.promptCapabilities.audio),
             ("promptCapabilities.embeddedContext", "doc.text", "Context", capabilities.promptCapabilities.embeddedContext),
             ("loadSession", "arrow.clockwise", "Restore", capabilities.loadSession),
-            ("resumeSession", "arrow.trianglehead.clockwise", "Resume", capabilities.resumeSession)
+            ("resumeSession", "arrow.trianglehead.clockwise", "Resume", capabilities.resumeSession),
+            ("sessionCapabilities.close", "xmark.circle", "Close", capabilities.closeSession),
+            ("auth.logout", "rectangle.portrait.and.arrow.right", "Logout", capabilities.supportsLogout)
         ]
     }
 

@@ -15,6 +15,10 @@ final class AgentInfoParsingTests: XCTestCase {
                 "listSessions": .bool(false),
                 "sessionCapabilities": .object([
                     "resume": .object([:]),
+                    "close": .object([:]),
+                ]),
+                "auth": .object([
+                    "logout": .object([:]),
                 ]),
                 "promptCapabilities": .object([
                     "image": .bool(true),
@@ -39,6 +43,8 @@ final class AgentInfoParsingTests: XCTestCase {
         XCTAssertEqual(info.displayNameWithVersion, "Qwen Code v0.4.0")
         XCTAssertEqual(info.capabilities.loadSession, true)
         XCTAssertEqual(info.capabilities.resumeSession, true)
+        XCTAssertEqual(info.capabilities.closeSession, true)
+        XCTAssertEqual(info.capabilities.supportsLogout, true)
         XCTAssertEqual(info.capabilities.listSessions, false)
         XCTAssertEqual(info.capabilities.sessionListRequiresCwd, true)
         XCTAssertEqual(info.capabilities.promptCapabilities.image, true)

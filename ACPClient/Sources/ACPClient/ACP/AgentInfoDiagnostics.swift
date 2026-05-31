@@ -13,6 +13,13 @@ public enum AgentInfoDiagnostics {
     /// Returns a human-readable summary of core agent capabilities commonly surfaced in logs.
     public static func capabilitySummary(for agentInfo: AgentProfile) -> String {
         let caps = agentInfo.capabilities
-        return "Agent: \(agentInfo.displayNameWithVersion), loadSession: \(caps.loadSession), resumeSession: \(caps.resumeSession), sessionListRequiresCwd: \(caps.sessionListRequiresCwd)"
+        return [
+            "Agent: \(agentInfo.displayNameWithVersion)",
+            "loadSession: \(caps.loadSession)",
+            "resumeSession: \(caps.resumeSession)",
+            "closeSession: \(caps.closeSession)",
+            "logout: \(caps.supportsLogout)",
+            "sessionListRequiresCwd: \(caps.sessionListRequiresCwd)"
+        ].joined(separator: ", ")
     }
 }

@@ -85,11 +85,17 @@ public struct SessionCommand: Equatable, Sendable {
 
 /// Parsed agent capabilities from the initialize response.
 public struct AgentCapabilityState: Equatable, Sendable {
+    /// Whether the agent supports logout.
+    public var supportsLogout: Bool
+
     /// Whether the agent supports session/load.
     public var loadSession: Bool
 
     /// Whether the agent supports session/resume.
     public var resumeSession: Bool
+
+    /// Whether the agent supports session/close.
+    public var closeSession: Bool
 
     /// Whether the agent supports session/list.
     public var listSessions: Bool
@@ -102,14 +108,18 @@ public struct AgentCapabilityState: Equatable, Sendable {
     public var promptCapabilities: PromptCapabilityState
 
     public init(
+        supportsLogout: Bool = false,
         loadSession: Bool = false,
         resumeSession: Bool = false,
+        closeSession: Bool = false,
         listSessions: Bool = true,
         sessionListRequiresCwd: Bool = false,
         promptCapabilities: PromptCapabilityState = PromptCapabilityState()
     ) {
+        self.supportsLogout = supportsLogout
         self.loadSession = loadSession
         self.resumeSession = resumeSession
+        self.closeSession = closeSession
         self.listSessions = listSessions
         self.sessionListRequiresCwd = sessionListRequiresCwd
         self.promptCapabilities = promptCapabilities
@@ -318,11 +328,17 @@ public extension AgentProfile {
         }
 
         if let sessionCaps = capabilitiesObj["sessionCapabilities"]?.objectValue {
-            // session/resume capability is represented by a nested object:
-            // { "sessionCapabilities": { "resume": {} } }
             if sessionCaps["resume"] != nil {
                 capabilities.resumeSession = true
             }
+            if sessionCaps["close"] != nil {
+                capabilities.closeSession = true
+            }
+        }
+
+        if let authCaps = capabilitiesObj["auth"]?.objectValue,
+           authCaps["logout"] != nil {
+            capabilities.supportsLogout = true
         }
 
         if let listSessions = capabilitiesObj["listSessions"]?.boolValue {
@@ -399,11 +415,17 @@ public extension AgentProfile {
         }
 
         if let sessionCaps = capabilitiesObj["sessionCapabilities"] as? [String: Any] {
-            // session/resume capability is represented by a nested object:
-            // { "sessionCapabilities": { "resume": {} } }
             if sessionCaps["resume"] != nil {
                 capabilities.resumeSession = true
             }
+            if sessionCaps["close"] != nil {
+                capabilities.closeSession = true
+            }
+        }
+
+        if let authCaps = capabilitiesObj["auth"] as? [String: Any],
+           authCaps["logout"] != nil {
+            capabilities.supportsLogout = true
         }
 
         if let listSessions = capabilitiesObj["listSessions"] as? Bool {
